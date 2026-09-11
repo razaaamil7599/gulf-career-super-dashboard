@@ -855,6 +855,28 @@ async function getMessengerStatus() {
     result.subscribedAppsError = err?.response?.data?.error?.message || err.message;
   }
 
+  // Which scopes this specific token actually carries right now — independent
+  // of App Review status. A rejected Advanced Access review doesn't revoke a
+  // scope already granted directly by the page's own admin (Standard Access),
+  // so this is the only reliable way to see whether pages_messaging etc. are
+  // truly live on this token or not.
+  const appId = process.env.META_APP_ID || '';
+  const appSecret = process.env.META_APP_SECRET || '';
+  if (appId && appSecret) {
+    try {
+      const debugRes = await axios.get('https://graph.facebook.com/v21.0/debug_token', {
+        params: { input_token: pageAccessToken, access_token: `${appId}|${appSecret}` },
+      });
+      const info = debugRes.data?.data || {};
+      result.tokenScopes = info.scopes || [];
+      result.tokenIsValid = info.is_valid ?? null;
+      result.tokenExpiresAt = info.expires_at ?? null;
+      result.tokenType = info.type || null;
+    } catch (err) {
+      result.debugTokenError = err?.response?.data?.error?.message || err.message;
+    }
+  }
+
   return result;
 }
 
