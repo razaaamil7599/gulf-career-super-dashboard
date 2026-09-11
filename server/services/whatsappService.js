@@ -794,14 +794,68 @@ async function getMetaStatus(senderPhoneIdOrPhone = null) {
     }
   }
 
+  const messenger = await getMessengerStatus();
+
   return {
     isConfigured,
     isLive,
     hasToken: !!accessToken,
     hasPhoneId: !!phoneId,
     hasWabaId: !!wabaId,
-    mode: process.env.NODE_ENV || 'production'
+    mode: process.env.NODE_ENV || 'production',
+    messenger,
   };
+}
+
+/**
+ * Diagnostic check for Messenger (Facebook Page) readiness — separate from the
+ * WhatsApp check above since they use different tokens/objects. Never returns
+ * the token itself, only pass/fail facts, so this is safe to expose.
+ */
+async function getMessengerStatus() {
+  const pageAccessToken = process.env.PAGE_ACCESS_TOKEN || '';
+  const pageId = process.env.PAGE_ID || '';
+  const result = {
+    hasToken: !!pageAccessToken,
+    hasPageId: !!pageId,
+    tokenValid: false,
+    tokenPageId: null,
+    tokenPageName: null,
+    pageIdMatches: null,
+    appSubscribed: false,
+    subscribedFields: [],
+  };
+
+  if (!pageAccessToken) return result;
+
+  try {
+    const meRes = await axios.get('https://graph.facebook.com/v21.0/me', {
+      params: { fields: 'id,name' },
+      headers: { Authorization: `Bearer ${pageAccessToken}` },
+    });
+    result.tokenValid = !!meRes.data.id;
+    result.tokenPageId = meRes.data.id || null;
+    result.tokenPageName = meRes.data.name || null;
+    result.pageIdMatches = pageId ? meRes.data.id === pageId : null;
+  } catch (err) {
+    result.tokenValid = false;
+    result.tokenError = err?.response?.data?.error?.message || err.message;
+    return result;
+  }
+
+  try {
+    const subRes = await axios.get(`https://graph.facebook.com/v21.0/${result.tokenPageId}/subscribed_apps`, {
+      params: { fields: 'subscribed_fields' },
+      headers: { Authorization: `Bearer ${pageAccessToken}` },
+    });
+    const apps = subRes.data?.data || [];
+    result.appSubscribed = apps.length > 0;
+    result.subscribedFields = apps[0]?.subscribed_fields || [];
+  } catch (err) {
+    result.subscribedAppsError = err?.response?.data?.error?.message || err.message;
+  }
+
+  return result;
 }
 
 /**
