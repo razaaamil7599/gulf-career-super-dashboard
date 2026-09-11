@@ -802,8 +802,22 @@ async function getRelevantVacancies(candidate = {}, latestMessage = '', messages
   }));
 }
 
+const MAX_VACANCY_OPTION_LABEL_LENGTH = 60;
+
+// A vacancy's skill/title field is meant to be a short role name, but the dashboard's
+// vacancy-add form has no length limit, so a full marketing flyer pasted into that field
+// (as happened with the Azerbaijan Warehouse Jobs entry) would otherwise get dumped into
+// every single greeting/fallback reply sent to every candidate. Collapse whitespace and
+// hard-cap the length so one bad data entry can never flood every reply again.
+function shortVacancyLabel(value = '') {
+  const collapsed = String(value || '').replace(/\s+/g, ' ').trim();
+  return collapsed.length > MAX_VACANCY_OPTION_LABEL_LENGTH
+    ? `${collapsed.slice(0, MAX_VACANCY_OPTION_LABEL_LENGTH - 1)}…`
+    : collapsed;
+}
+
 function formatVacancyOption(vacancy = {}) {
-  const role = vacancy.skill || vacancy.title || 'Vacancy';
+  const role = shortVacancyLabel(vacancy.skill || vacancy.title) || 'Vacancy';
   const parts = [role];
   if (vacancy.country) parts.push(vacancy.country);
   if (vacancy.salary || vacancy.candidatePrice) parts.push(vacancy.salary || vacancy.candidatePrice);
@@ -933,7 +947,7 @@ function cleanVacancyFieldValue(value) {
 function getVacancySummary(vacancies = []) {
   return vacancies
     .map(vacancy => {
-      const headline = cleanVacancyFieldValue(vacancy.title) || cleanVacancyFieldValue(vacancy.skill) || 'Vacancy';
+      const headline = shortVacancyLabel(cleanVacancyFieldValue(vacancy.title) || cleanVacancyFieldValue(vacancy.skill)) || 'Vacancy';
       const serviceCharge = cleanVacancyFieldValue(vacancy.serviceCharge);
       const benefits = cleanVacancyFieldValue(vacancy.benefits);
       const visaInfo = cleanVacancyFieldValue(vacancy.visaInfo);

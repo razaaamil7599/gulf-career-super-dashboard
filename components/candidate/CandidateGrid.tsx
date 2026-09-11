@@ -169,20 +169,48 @@ export default function CandidateGrid({
   // reshuffling the ones already on screen.
   const orderedIdsRef = useRef<string[]>([]);
 
+  // Last-known activity timestamp per candidate id, so a live push can tell
+  // "this candidate just got a fresh inbound message" apart from "this
+  // candidate's record changed for some unrelated reason (unread count reset,
+  // profile edit, etc.)". Previously only brand-new candidate ids were bumped
+  // to the top of the list — a candidate who already existed in the grid and
+  // sent a NEW message kept sitting wherever they last were, so an active
+  // ongoing chat could stay buried below older, quiet ones.
+  const lastSeenActivityRef = useRef<Record<string, number>>({});
+
   const applyFilters = useCallback((source: Candidate[], forceResort: boolean) => {
     const filtered = source.filter(candidate => matchesFilters(candidate, activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked));
     const byId = new Map(filtered.map((c) => [c.id, c]));
+    const nextActivity: Record<string, number> = {};
+    for (const c of filtered) nextActivity[c.id] = getCandidateActivityTime(c);
 
     if (forceResort) {
       const sorted = sortCandidates(filtered, activeCandidateId);
       orderedIdsRef.current = sorted.map((c) => c.id);
+      lastSeenActivityRef.current = nextActivity;
       setCandidates(sorted);
     } else {
       const existingIds = new Set(orderedIdsRef.current);
-      const stillPresent = orderedIdsRef.current.filter((id) => byId.has(id));
+      const previousActivity = lastSeenActivityRef.current;
+
+      const bumped: Candidate[] = [];
+      const unchanged: string[] = [];
+      for (const id of orderedIdsRef.current) {
+        const candidate = byId.get(id);
+        if (!candidate) continue;
+        const lastSeenTs = previousActivity[id] ?? nextActivity[id];
+        if (nextActivity[id] > lastSeenTs) {
+          bumped.push(candidate);
+        } else {
+          unchanged.push(id);
+        }
+      }
+
       const brandNew = sortCandidates(filtered.filter((c) => !existingIds.has(c.id)), activeCandidateId);
-      const nextOrder = [...brandNew.map((c) => c.id), ...stillPresent];
+      const bumpedSorted = sortCandidates(bumped, activeCandidateId);
+      const nextOrder = [...brandNew.map((c) => c.id), ...bumpedSorted.map((c) => c.id), ...unchanged];
       orderedIdsRef.current = nextOrder;
+      lastSeenActivityRef.current = nextActivity;
       setCandidates(nextOrder.map((id) => byId.get(id)).filter((c): c is Candidate => Boolean(c)));
     }
     setTotal(filtered.length);

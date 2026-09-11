@@ -20,6 +20,7 @@ const {
 const aiAgentService = require('../services/aiAgentService');
 const whatsappService = require('../services/whatsappService');
 const { handleCandidateConversation } = require('../services/candidateConversationService');
+const { runWithGate } = require('../services/aiConcurrencyGateService');
 const { matchCandidates } = require('../services/matchingService');
 const { appendChatLog } = require('../services/googleSheetsService');
 const { resolveIdentity } = require('../services/identityService');
@@ -452,7 +453,11 @@ router.post('/', async (req, res) => {
       timestamp: messageData.timestamp,
     });
 
-    await handleCandidateConversation({
+    // Fire-and-forget: gated so a second candidate's AI turn doesn't run
+    // concurrently with one already in flight (see aiConcurrencyGateService),
+    // and NOT awaited here so Meta gets its 200 ack immediately instead of
+    // waiting on a call that may sit queued for up to 2 minutes.
+    runWithGate(from, {
       from,
       name,
       body: storedBody,
@@ -469,6 +474,8 @@ router.post('/', async (req, res) => {
       wabaId: accountInfo.wabaId || wabaId,
       businessAccountName: accountInfo.accountName,
       channel: channel || 'whatsapp',
+    }, handleCandidateConversation).catch((err) => {
+      console.error(`[Webhook] Async candidate conversation failed for ${from}:`, err.message);
     });
 
     res.sendStatus(200);
