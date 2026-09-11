@@ -82,19 +82,13 @@ function formatCandidateActivityTime(candidate: Candidate): string {
   });
 }
 
-function sortCandidates(candidates: Candidate[], activeCandidateId?: string | null) {
+// Strictly chronological: whichever candidate has the most recent inbound/
+// outbound activity sorts first, full stop — even a 1-second difference must
+// move it to the top. No unread-count priority and no "pin the open chat"
+// exception, since either would let an older conversation outrank a genuinely
+// fresher one, which is exactly the ordering this list must never show.
+function sortCandidates(candidates: Candidate[]) {
   return [...candidates].sort((a, b) => {
-    const aActive = a.id === activeCandidateId ? 1 : 0;
-    const bActive = b.id === activeCandidateId ? 1 : 0;
-    if (aActive !== bActive) return bActive - aActive;
-
-    // Unread first — candidates with more unread messages float to the top,
-    // fully-read ones sink down. Recency only breaks ties within the same
-    // unread count (e.g. among all fully-read candidates).
-    const aUnread = Number(a.unreadCount || 0);
-    const bUnread = Number(b.unreadCount || 0);
-    if (aUnread !== bUnread) return bUnread - aUnread;
-
     const aTs = getCandidateActivityTime(a);
     const bTs = getCandidateActivityTime(b);
     if (aTs !== bTs) return bTs - aTs;
@@ -158,63 +152,16 @@ export default function CandidateGrid({
   const [arsPasswordInput, setArsPasswordInput] = useState('');
   const [arsPasswordError, setArsPasswordError] = useState('');
 
-  // Card ORDER is intentionally decoupled from live data pushes: with 4000+
-  // candidates, some candidate's record changes almost continuously (new
-  // message, unread count, etc.), and re-sorting the whole grid on every one
-  // of those pushes made cards jump around under the admin's cursor while
-  // reading. Order only gets recomputed on an explicit trigger (filters,
-  // search, or the Refresh button/refreshKey); live pushes update each
-  // existing card's content in place and simply prepend genuinely new
-  // candidates, the way a chat app adds a new conversation without
-  // reshuffling the ones already on screen.
-  const orderedIdsRef = useRef<string[]>([]);
-
-  // Last-known activity timestamp per candidate id, so a live push can tell
-  // "this candidate just got a fresh inbound message" apart from "this
-  // candidate's record changed for some unrelated reason (unread count reset,
-  // profile edit, etc.)". Previously only brand-new candidate ids were bumped
-  // to the top of the list — a candidate who already existed in the grid and
-  // sent a NEW message kept sitting wherever they last were, so an active
-  // ongoing chat could stay buried below older, quiet ones.
-  const lastSeenActivityRef = useRef<Record<string, number>>({});
-
-  const applyFilters = useCallback((source: Candidate[], forceResort: boolean) => {
+  // Card order is always the strict chronological sort below, recomputed on
+  // every live data push — a fresh message anywhere must be visible at the
+  // top immediately, even a 1-second difference. (forceResort is kept as a
+  // parameter only because callers still pass it; it no longer changes the
+  // behavior here — every call fully re-sorts.)
+  const applyFilters = useCallback((source: Candidate[], _forceResort: boolean) => {
     const filtered = source.filter(candidate => matchesFilters(candidate, activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked));
-    const byId = new Map(filtered.map((c) => [c.id, c]));
-    const nextActivity: Record<string, number> = {};
-    for (const c of filtered) nextActivity[c.id] = getCandidateActivityTime(c);
-
-    if (forceResort) {
-      const sorted = sortCandidates(filtered, activeCandidateId);
-      orderedIdsRef.current = sorted.map((c) => c.id);
-      lastSeenActivityRef.current = nextActivity;
-      setCandidates(sorted);
-    } else {
-      const existingIds = new Set(orderedIdsRef.current);
-      const previousActivity = lastSeenActivityRef.current;
-
-      const bumped: Candidate[] = [];
-      const unchanged: string[] = [];
-      for (const id of orderedIdsRef.current) {
-        const candidate = byId.get(id);
-        if (!candidate) continue;
-        const lastSeenTs = previousActivity[id] ?? nextActivity[id];
-        if (nextActivity[id] > lastSeenTs) {
-          bumped.push(candidate);
-        } else {
-          unchanged.push(id);
-        }
-      }
-
-      const brandNew = sortCandidates(filtered.filter((c) => !existingIds.has(c.id)), activeCandidateId);
-      const bumpedSorted = sortCandidates(bumped, activeCandidateId);
-      const nextOrder = [...brandNew.map((c) => c.id), ...bumpedSorted.map((c) => c.id), ...unchanged];
-      orderedIdsRef.current = nextOrder;
-      lastSeenActivityRef.current = nextActivity;
-      setCandidates(nextOrder.map((id) => byId.get(id)).filter((c): c is Candidate => Boolean(c)));
-    }
+    setCandidates(sortCandidates(filtered));
     setTotal(filtered.length);
-  }, [activeSkill, activeCountry, searchQuery, activeCandidateId, botFilter, arsUnlocked]);
+  }, [activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked]);
 
   function requestArsAccess() {
     if (arsUnlocked) {

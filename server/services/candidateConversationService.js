@@ -821,6 +821,12 @@ function formatVacancyOption(vacancy = {}) {
   const parts = [role];
   if (vacancy.country) parts.push(vacancy.country);
   if (vacancy.salary || vacancy.candidatePrice) parts.push(vacancy.salary || vacancy.candidatePrice);
+  // Candidates were only learning the service charge if they explicitly asked for
+  // it, several messages into the conversation — state it upfront alongside the
+  // role/salary, same as it's already stated whenever the AI path answers a direct
+  // charge question, so there's no gap in what the code-level fallback path shows.
+  const serviceCharge = String(vacancy.serviceCharge || '').trim();
+  parts.push(serviceCharge ? `Visa & Ticket Free, Service Charge Rs.${serviceCharge}` : 'Visa & Ticket Free');
   return parts.join(' | ');
 }
 
@@ -1477,7 +1483,7 @@ const DEFAULT_GCG_CORE_RULES = `- Ask only ONE focused question at a time, in ON
 - If the user asks for a human callback, raises a complaint, asks about payment/refund/guarantee, or the reply needs human approval, set adminAssist.needsApproval=true and explain the reason briefly.
 - Do not make legal or factual guarantees about visa, placement, approval, joining, salary, travel, or employer selection. Never mention license, licence, licensing status, registration status, permit status, or whether the company has or does not have a licence. Instead of promising outcomes, say things like "process ke dauran arrange/help/guide kiya jayega" or "subject to employer selection and documentation". Never say anything that can create legal risk, false commitment, or misleading employment guarantee.
 - Do not ask candidates to manually dial or call coordinator phone numbers. Instead, inform them that their profile is being processed and they will be contacted.
-- Service Charge & Travel Costs: Visa and Ticket are completely free, provided by the company (Visa ticket free rahega company ki taraf se). Only quote a service-charge amount if the matched vacancy's own entry in the "Active vacancy summary" lists a "Service Charge" figure — use that exact amount and say it must be paid at the office (e.g. "Office service charge ₹<amount> pay karna hoga"). Never invent, round, or reuse a service-charge number from a different vacancy or from earlier in the conversation. If the current vacancy has no "Service Charge" line, do not state any figure; instead say the exact service charge will be confirmed by the office team.
+- Service Charge & Travel Costs: Visa and Ticket are completely free, provided by the company (Visa ticket free rahega company ki taraf se). State this upfront, proactively, the FIRST time you present or discuss a specific vacancy — do not wait for the candidate to ask about cost. If the matched vacancy's own entry in the "Active vacancy summary" lists a "Service Charge" figure, state that exact amount in the same message (e.g. "Visa aur ticket free hai, office service charge ₹<amount> pay karna hoga") and say it must be paid at the office. Never invent, round, or reuse a service-charge number from a different vacancy or from earlier in the conversation. If the current vacancy has no "Service Charge" line, do not state any figure; instead say the exact service charge will be confirmed by the office team. Once you've stated it in the conversation, you don't need to repeat it in every subsequent message — only bring it up again if the candidate asks.
 - Common candidate questions — how to answer them (based on what real candidates actually ask most):
   * "Is this fraud/fake/scam?": Take it seriously, never sound defensive or scripted. Calmly confirm the company is a real recruitment agency, offer the office address/contact so they can visit or verify in person, and mention that no payment is ever asked for over chat (only the office service charge, if applicable, paid in person). Never argue or repeat "trust me" — offer verifiable proof instead (office visit, documents at the office).
   * Candidate states their own years of experience unprompted (e.g. "I have 8 years experience in Saudi"): Acknowledge it, save it, and move to the next missing profiling detail — do not ask "how much experience do you have" again.
