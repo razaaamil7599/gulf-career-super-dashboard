@@ -451,6 +451,7 @@ router.post('/', async (req, res) => {
       message: storedBody,
       direction: 'INBOUND',
       timestamp: messageData.timestamp,
+      channel: channel || 'whatsapp',
     });
 
     // Fire-and-forget: gated so a second candidate's AI turn doesn't run

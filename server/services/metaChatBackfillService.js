@@ -50,14 +50,17 @@ async function importConversation({ conversation, channel, pageId, pageAccessTok
   const contactId = channel === 'whatsapp' ? String(other.id).replace(/\D/g, '') : String(other.id);
   if (!contactId) return;
 
+  // A conversation's messages were previously fetched with a flat .limit(200)
+  // and no further pagination — any thread with more than 200 messages had its
+  // older half silently dropped. Follow paging.next on the messages edge
+  // itself so long-running threads come back in full, not just the newest 200.
   let messages;
   try {
-    const detail = await graphGet(
-      `/${conversation.id}`,
-      { fields: 'messages.limit(200){message,from,created_time,id}' },
+    messages = await fetchAllPages(
+      `/${conversation.id}/messages`,
+      { fields: 'message,from,created_time,id', limit: 200 },
       pageAccessToken
     );
-    messages = detail.messages?.data || [];
   } catch (err) {
     stats.conversationErrors += 1;
     stats.errors.push(`conversation ${conversation.id}: ${err.response?.data?.error?.message || err.message}`);

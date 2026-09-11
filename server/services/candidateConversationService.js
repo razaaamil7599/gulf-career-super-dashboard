@@ -1948,7 +1948,7 @@ async function ensureCandidateRecord(phone, contactName, profile = {}, extraData
   return { id, ...newCandidate };
 }
 
-async function recordOutboundMessage(phone, body, sendResult) {
+async function recordOutboundMessage(phone, body, sendResult, channel = 'whatsapp') {
   const timestamp = new Date().toISOString();
   const firebaseKey = await rtdbPush(`messages/${phone}`, {
     from: 'AI_AGENT',
@@ -1966,6 +1966,7 @@ async function recordOutboundMessage(phone, body, sendResult) {
     message: body,
     direction: 'OUTBOUND',
     timestamp,
+    channel,
   });
 
   if (sendResult.success && sendResult.messageId) {
@@ -2238,7 +2239,7 @@ async function handleCandidateConversation({
     });
     
     await sendChannelMessage(channel, phone, replyText, recipientPhoneId || recipientPhone);
-    await recordOutboundMessage(phone, replyText, { success: true });
+    await recordOutboundMessage(phone, replyText, { success: true }, channel);
 
     // Pause/stop conversation control block
     await rtdbUpdate(`conversation_control/${phone}`, { autoReplyPaused: true });
@@ -2314,7 +2315,7 @@ async function handleCandidateConversation({
   }
 
   const sendResult = await sendChannelMessage(channel, phone, plan.replyText, recipientPhoneId || recipientPhone);
-  await recordOutboundMessage(phone, plan.replyText, sendResult);
+  await recordOutboundMessage(phone, plan.replyText, sendResult, channel);
   await appendAgentOutputLog({
     phone,
     task: isAgencyConversation ? 'agency_auto_reply' : 'candidate_auto_reply',
@@ -2383,7 +2384,7 @@ async function handleCandidateConversation({
     });
     
     await sendChannelMessage(channel, phone, dispatchMsg, recipientPhoneId || recipientPhone);
-    await recordOutboundMessage(phone, dispatchMsg, { success: true });
+    await recordOutboundMessage(phone, dispatchMsg, { success: true }, channel);
     
     await storeConversationMemory(phone, {
       ...(storedMemory || {}),

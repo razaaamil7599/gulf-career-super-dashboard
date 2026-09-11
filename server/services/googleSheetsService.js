@@ -8,7 +8,19 @@ const DEFAULT_SHEET_TAB = process.env.SHEET_TAB_NAME || 'Sheet1';
 const DEFAULT_OUTPUT_SHEET_TAB = process.env.SHEET_OUTPUT_TAB_NAME || 'Sheet2';
 const SHEET_TIMEZONE_OFFSET_MINUTES = 330;
 
+// Messenger and Instagram get their own tabs (kept separate per business request)
+// instead of piling into the WhatsApp tab; anything else keeps the original
+// single-tab behavior.
+const CHANNEL_SHEET_TABS = {
+  messenger: 'Facebook Messenger',
+  instagram: 'Instagram',
+};
+function resolveSheetTabForChannel(channel) {
+  return CHANNEL_SHEET_TABS[String(channel || '').toLowerCase()] || DEFAULT_SHEET_TAB;
+}
+
 let warnedMissingSheetId = false;
+const tabsKnownToExist = new Set();
 
 function getSheetId() {
   return process.env.SHEET_ID || '';
@@ -96,6 +108,31 @@ async function getSheetValues(range) {
   return response.data?.values || [];
 }
 
+// Creates the tab if the spreadsheet doesn't already have one with this exact
+// name. Cached per-process (tabsKnownToExist) so this only hits the Sheets API
+// once per tab name, not on every single message.
+async function ensureSheetTabExists(sheetName) {
+  if (tabsKnownToExist.has(sheetName)) return;
+
+  const sheetId = getSheetId();
+  if (!sheetId) return;
+
+  const accessToken = await getAccessToken();
+  const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}`;
+  const metaRes = await axios.get(metaUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const exists = (metaRes.data.sheets || []).some((s) => s.properties.title === sheetName);
+
+  if (!exists) {
+    await axios.post(
+      `${metaUrl}:batchUpdate`,
+      { requests: [{ addSheet: { properties: { title: sheetName } } }] },
+      { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  tabsKnownToExist.add(sheetName);
+}
+
 async function ensureSheetHeaders(sheetName, headers) {
   try {
     const existing = await getSheetValues(`${sheetName}!A1:${String.fromCharCode(64 + headers.length)}1`);
@@ -167,7 +204,7 @@ async function appendRowsToSheet({ sheetName, rows }) {
   return { success: true };
 }
 
-async function appendChatLog({ phone, message, direction, timestamp }) {
+async function appendChatLog({ phone, message, direction, timestamp, channel = 'whatsapp' }) {
   const sheetId = getSheetId();
   if (!sheetId) {
     if (!warnedMissingSheetId) {
@@ -177,6 +214,7 @@ async function appendChatLog({ phone, message, direction, timestamp }) {
     return { skipped: true, reason: 'SHEET_ID_MISSING' };
   }
 
+  const sheetName = resolveSheetTabForChannel(channel);
   const row = [
     formatTimestamp(timestamp),
     formatPhoneForSheet(phone),
@@ -185,7 +223,10 @@ async function appendChatLog({ phone, message, direction, timestamp }) {
   ];
 
   try {
-    await appendRowsToSheet({ sheetName: DEFAULT_SHEET_TAB, rows: [row] });
+    if (sheetName !== DEFAULT_SHEET_TAB) {
+      await ensureSheetTabExists(sheetName);
+    }
+    await appendRowsToSheet({ sheetName, rows: [row] });
     return { success: true };
   } catch (error) {
     const details = error.response?.data?.error?.message || error.message;
