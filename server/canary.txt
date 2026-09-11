@@ -1,0 +1,4 @@
+this is a canary file to test fs sync. line 1
+line 2
+line 3 with some content
+line 4 final

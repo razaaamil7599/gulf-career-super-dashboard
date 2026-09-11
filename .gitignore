@@ -29,9 +29,32 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
+tmp_*
+
+# local secrets and generated runtime artifacts
+/firebase-service-account.json
+/secrets/
+/keystores/
+/tmp/
+/public/tmp/
+/scratch/
+env-vars.yaml
+tmp_env.yaml
 
 # env files (can opt-in for committing if needed)
 .env*
+
+# old build bundles / unrelated project artifacts that live in this folder
+*.tar.gz
+*.zip
+_superseded_release_candidates/
+apk_compilation/
+build_master_app/
+netlify-clean-deploy/
+stealth-vault-ecosystem/
+release_artifacts/
+build_privacy_os_v*.ps1
 
 # vercel
 .vercel
