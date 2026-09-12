@@ -6,13 +6,47 @@ const {
   rtdbUpdate,
   safeFirebaseKey,
 } = require('./firebaseService');
-const { sendMessage } = require('./whatsappService');
+const { sendMessage, sendImageMessage, sendDocumentMessage, sendAudioMessage } = require('./whatsappService');
 const { sendMessengerMessage, sendInstagramMessage } = require('./metaChannelService');
 
 async function sendChannelMessage(channel, to, body, senderContext) {
   if (channel === 'messenger') return sendMessengerMessage(to, body);
   if (channel === 'instagram') return sendInstagramMessage(to, body);
   return sendMessage(to, body, senderContext);
+}
+
+// A candidate's document/photo previously only got an in-chat "we received
+// it, team will review" acknowledgement — nobody actually reviewed it,
+// because the file never left Firebase; admin only saw it if they happened
+// to open that exact candidate's chat in the dashboard. Forward it to the
+// admin's own WhatsApp immediately so a real human sees it without having to
+// go looking. WhatsApp-only for now (Messenger/Instagram media sending isn't
+// built yet — see metaChannelService.js).
+async function forwardCandidateMediaToAdmin({ phone, candidateName, type, mediaId, mimeType, fileName, caption, channel }) {
+  if (channel && channel !== 'whatsapp') return;
+  if (!mediaId) return;
+
+  const admins = getAdminPhones();
+  if (!admins.length) return;
+
+  const label = `${candidateName || 'Candidate'} (${phone}) ne ${type || 'media'} bheja hai:`;
+
+  for (const adminPhone of admins) {
+    try {
+      await sendMessage(adminPhone, label);
+      if (type === 'image') {
+        await sendImageMessage(adminPhone, { mediaId, caption: caption || '' });
+      } else if (type === 'video') {
+        await sendDocumentMessage(adminPhone, { mediaId, filename: fileName || 'video.mp4' });
+      } else if (type === 'audio') {
+        await sendAudioMessage(adminPhone, mediaId);
+      } else {
+        await sendDocumentMessage(adminPhone, { mediaId, filename: fileName || 'document' });
+      }
+    } catch (err) {
+      console.error(`[Media Forward] Failed to forward ${type} from ${phone} to admin ${adminPhone}:`, err.message);
+    }
+  }
 }
 const { callGeminiJson, GEMINI_MODEL } = require('./aiAgentService');
 const {
@@ -27,6 +61,8 @@ const {
   getAdminAiProfileForNumber,
   queueAdminApprovalRequest,
   shouldEscalateToAdminApproval,
+  getAdminPhones,
+  notifyAdmins,
 } = require('./adminControlService');
 const { appendChatLog, getChatHistoryByPhone, appendAgentOutputLog } = require('./googleSheetsService');
 const { ingestAgencyVacancy, shouldAutoProcessAgencyLead } = require('./agencyVacancyAutomationService');
@@ -2185,6 +2221,19 @@ async function handleCandidateConversation({
 
   const vacancies = await getRelevantVacancies(existingCandidate || {}, body || '', messages, recipientPhone);
   const isAgencyConversation = identityTag === 'AGENCY' || existingCandidate?.isAgency === true || storedMemory?.agencyMode === true;
+
+  if (!isAgencyConversation && mediaId) {
+    forwardCandidateMediaToAdmin({
+      phone,
+      candidateName: existingCandidate?.name || name || '',
+      type,
+      mediaId,
+      mimeType,
+      fileName,
+      channel,
+    }).catch((err) => console.error(`[Media Forward] Unexpected error for ${phone}:`, err.message));
+  }
+
   const candidateContext = {
     ...(existingCandidate || {}),
     ...(storedMemory || {}),
@@ -2380,14 +2429,33 @@ async function handleCandidateConversation({
       messageId: `dispatch-${Date.now()}`,
     });
 
+    // The candidate was previously only told "your profile has been sent to
+    // our coordinator" while nothing actually reached a human — this was the
+    // core "deal closed but admin never finds out" gap. Send a real WhatsApp
+    // message to every admin number now.
+    const adminSummary = [
+      `[PROFILING COMPLETE] Candidate ready for follow-up:`,
+      `Name: ${candidate.name || 'Unknown'}`,
+      `Phone: ${phone}`,
+      `Skill: ${candidate.skill || 'Not specified'}`,
+      `Country: ${candidate.preferredCountry || candidate.country || 'Not specified'}`,
+      `Age: ${age}`,
+      `City: ${city}`,
+      `Work status: ${candidate.workStatus || 'Not specified'}`,
+      `Documents ready: ${candidate.documentsReady || 'Not specified'}`,
+      photos.length ? `Photos: ${photos.join(', ')}` : '',
+      `Chat: whatsapp.com/send?phone=${phone}`,
+    ].filter(Boolean).join('\n');
+    notifyAdmins(adminSummary).catch((err) => console.error(`[Auto Dispatch] Failed to notify admins for ${phone}:`, err.message));
+
     const replyLanguage = detectReplyLanguage({ latestMessage: body, messages, candidate });
     const dispatchMsg = pickLocalizedCopy(replyLanguage, {
-      ar: `تم إرسال بياناتك تلقائيًا إلى المنسق الأول لدينا. سيتصلون بك مباشرة قريبًا. شكرًا لك.`,
-      hi: `आपका प्रोफाइल विवरण हमारे सीनियर कोऑर्डिनेटर को भेज दिया गया है। वे जल्द ही आपसे सीधे संपर्क करेंगे। धन्यवाद।`,
-      en: `Your profile details have been automatically sent to our senior coordinator. They will contact you directly soon. Thank you.`,
-      roman: `Aapki profile details automatically hamare senior coordinator ko dispatch kar di gayi hain. Woh jald hi aapse directly contact karenge. Thank you.`,
+      ar: `تم إرسال بياناتك تلقائيًا إلى المنسق الأول لدينا. سيتصلون بك مباشرة قريبًا. للتواصل المباشر: ${GCC_DESK_PHONE}.`,
+      hi: `आपका प्रोफाइल विवरण हमारे सीनियर कोऑर्डिनेटर को भेज दिया गया है। वे जल्द ही आपसे सीधे संपर्क करेंगे। सीधे संपर्क के लिए: ${GCC_DESK_PHONE}.`,
+      en: `Your profile details have been automatically sent to our senior coordinator. They will contact you directly soon. For direct contact: ${GCC_DESK_PHONE}.`,
+      roman: `Aapki profile details automatically hamare senior coordinator ko dispatch kar di gayi hain. Woh jald hi aapse directly contact karenge. Direct contact ke liye: ${GCC_DESK_PHONE}.`,
     });
-    
+
     await sendChannelMessage(channel, phone, dispatchMsg, recipientPhoneId || recipientPhone);
     await recordOutboundMessage(phone, dispatchMsg, { success: true }, channel);
     

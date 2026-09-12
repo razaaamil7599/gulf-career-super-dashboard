@@ -934,6 +934,7 @@ async function handleAdminCommand({ from = '', body = '', mediaId = '', mimeType
 
 module.exports = {
   getAdminPhones,
+  notifyAdmins,
   isAdminPhone,
   getAdminAiProfile,
   getAdminAiProfileForNumber,
