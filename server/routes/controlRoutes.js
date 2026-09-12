@@ -86,6 +86,40 @@ const {
 
 const autoReply = require('../services/autoReplyService');
 const { publishDashboardMessageEvent } = require('../services/dashboardRealtimeService');
+const { sendMessengerMessage, sendInstagramMessage } = require('../services/metaChannelService');
+
+// The manual "reply" box (web dashboard + mobile app) always called WhatsApp's
+// sendMessage() regardless of which channel the contact actually came from —
+// harmless for WhatsApp phone numbers, but for a Messenger/Instagram contact
+// (a PSID, not a real phone number) WhatsApp's API rejects it outright
+// ("Message undeliverable"), so admins could never manually reply to those
+// candidates even though the AI bot's own replies route correctly. Detect the
+// channel from the contact's own message history (the phoneNumberId a past
+// message came in on tells us which surface — WhatsApp phone number id, the
+// Page id, or the Instagram business account id) before choosing how to send.
+async function resolveCandidateChannel(phone) {
+  const pageId = (process.env.PAGE_ID || '').trim();
+  const igId = (process.env.IG_ACCOUNT_ID || '').trim();
+  if (!pageId && !igId) return 'whatsapp';
+
+  try {
+    const thread = await rtdbGet(`messages/${phone}`);
+    if (!thread) return 'whatsapp';
+    const messages = Object.values(thread).sort(
+      (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
+    );
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const pid = String(messages[i]?.phoneNumberId || '').trim();
+      if (!pid) continue;
+      if (pageId && pid === pageId) return 'messenger';
+      if (igId && pid === igId) return 'instagram';
+      return 'whatsapp';
+    }
+  } catch (_) {
+    // fall through to the safe default below
+  }
+  return 'whatsapp';
+}
 
 // All routes in this file are auth-protected.
 router.use(apiKeyAuth);
@@ -375,10 +409,15 @@ router.post('/messages/send', async (req, res) => {
     if (!phone || !message) {
       return res.status(400).json({ ok: false, error: 'phone and message required' });
     }
-    const to = normalizeWhatsAppNumber(phone);
-    const result = await sendMessage(to, message);
+    const channel = await resolveCandidateChannel(phone);
+    const to = channel === 'whatsapp' ? normalizeWhatsAppNumber(phone) : String(phone).trim();
+    const result = channel === 'messenger'
+      ? await sendMessengerMessage(to, message)
+      : channel === 'instagram'
+      ? await sendInstagramMessage(to, message)
+      : await sendMessage(to, message);
     await logOutbound({ phone: to, body: message, result, kind: 'text' });
-    res.json({ ok: result.success, phone: to, ...result });
+    res.json({ ok: result.success, phone: to, channel, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -397,6 +436,14 @@ router.post('/messages/send-template', async (req, res) => {
 
     if (!phone || !templateName) {
       return res.status(400).json({ ok: false, error: 'phone and templateName required' });
+    }
+
+    const templateChannel = await resolveCandidateChannel(phone);
+    if (templateChannel !== 'whatsapp') {
+      return res.status(400).json({
+        ok: false,
+        error: `Official templates are a WhatsApp-only concept — this contact is on ${templateChannel}. Send a regular text message instead.`,
+      });
     }
 
     const to = normalizeWhatsAppNumber(phone);
@@ -428,6 +475,13 @@ router.post('/messages/send-image', async (req, res) => {
     const { phone, mediaId, imageUrl, caption } = req.body || {};
     if (!phone || (!mediaId && !imageUrl)) {
       return res.status(400).json({ ok: false, error: 'phone and mediaId or imageUrl required' });
+    }
+    const imageChannel = await resolveCandidateChannel(phone);
+    if (imageChannel !== 'whatsapp') {
+      return res.status(400).json({
+        ok: false,
+        error: `Image sending isn't built for Messenger/Instagram yet — this contact is on ${imageChannel}. Only text messages are supported there currently.`,
+      });
     }
     const to = normalizeWhatsAppNumber(phone);
     const result = await sendImageMessage(to, { mediaId, imageUrl, caption });
@@ -991,6 +1045,13 @@ router.post('/messages/send-media', mediaUpload.single('file'), async (req, res)
     const { phone, caption } = req.body || {};
     if (!phone || !req.file) {
       return res.status(400).json({ ok: false, error: 'phone and file required' });
+    }
+    const mediaChannel = await resolveCandidateChannel(phone);
+    if (mediaChannel !== 'whatsapp') {
+      return res.status(400).json({
+        ok: false,
+        error: `Media sending isn't built for Messenger/Instagram yet — this contact is on ${mediaChannel}. Only text messages are supported there currently.`,
+      });
     }
     const to = normalizeWhatsAppNumber(phone);
     const mimeType = req.file.mimetype || 'application/octet-stream';
