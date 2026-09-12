@@ -12,6 +12,19 @@ const RATE_LIMIT_COOLDOWN_MS = 60 * 1000; // default per-minute quota reset
 const QUOTA_EXHAUSTED_COOLDOWN_MS = 60 * 60 * 1000; // daily/free-tier quota fully used
 const BANNED_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 403 permission-denied / invalid key
 
+// Google's API-key-only endpoints never reveal which Google account or GCP
+// project a bare key belongs to (that's a deliberate privacy boundary, not
+// something we can query around) — so there is no way to definitively
+// "reject" two keys from the same account at add-time. Two things we CAN do
+// instead: (1) warn if two keys share the same admin-typed label, since
+// someone adding keys from the same Gmail account will often label them the
+// same way, and (2) notice when two different keys hit their DAILY quota
+// within a couple minutes of each other — free-tier daily quotas are
+// per-project, so keys that exhaust in lockstep repeatedly are a real signal
+// (not proof) that they share a project/account and aren't adding real
+// combined capacity.
+const DUPLICATE_QUOTA_WINDOW_MS = 3 * 60 * 1000;
+
 let roundRobinCursor = 0;
 
 function maskKey(key = '') {
@@ -32,6 +45,8 @@ function toPublicShape(entry) {
     lastUsedAt: entry.lastUsedAt || null,
     lastSuccessAt: entry.lastSuccessAt || null,
     cooldownUntil: entry.cooldownUntil || null,
+    possibleDuplicateAccount: entry.possibleDuplicateAccount || false,
+    possibleDuplicateNote: entry.possibleDuplicateNote || '',
   };
 }
 
@@ -98,7 +113,21 @@ async function addKeys(rawInput, label = '', provider = 'gemini') {
     added.push(id);
   }
 
-  return { addedCount: added.length, skippedCount: skipped.length, skipped };
+  // Can't verify which Google account a key belongs to (see note above), but
+  // a duplicate label is a strong hint the admin themselves is reusing an
+  // account/project name — flag it so they can double-check before assuming
+  // this key adds real extra daily capacity.
+  const normalizedLabel = String(label || '').trim().toLowerCase();
+  const labelCollisionWarning = normalizedLabel && added.length > 0
+    ? existing.some(e => String(e.label || '').trim().toLowerCase() === normalizedLabel)
+    : false;
+
+  return {
+    addedCount: added.length,
+    skippedCount: skipped.length,
+    skipped,
+    labelCollisionWarning,
+  };
 }
 
 async function deleteKey(id) {
@@ -156,12 +185,39 @@ function extractRetryDelayMs(errorData) {
 async function markKeyRateLimited(id, errorData) {
   const cooldownMs = extractRetryDelayMs(errorData);
   const message = errorData?.error?.message || 'Rate limited (429)';
+  const now = Date.now();
   await rtdbUpdate(`${KEYS_PATH}/${id}`, {
     status: 'red',
     lastError: message,
     lastUsedAt: new Date().toISOString(),
-    cooldownUntil: Date.now() + cooldownMs,
+    cooldownUntil: now + cooldownMs,
   });
+
+  // Only a genuine DAILY quota hit (not a routine per-minute 429) is a useful
+  // signal here — free-tier daily quotas are tracked per GCP project, so two
+  // different keys both running out of their daily allowance within a few
+  // minutes of each other is a real (if not certain) sign they share a
+  // project/account and aren't giving the pool independent capacity.
+  if (cooldownMs !== QUOTA_EXHAUSTED_COOLDOWN_MS) return;
+
+  const all = await rtdbGetAll(KEYS_PATH);
+  const recentlyQuotaExhausted = all.find((e) => {
+    if (e.id === id) return false;
+    if (!e.lastUsedAt) return false;
+    const withinWindow = now - new Date(e.lastUsedAt).getTime() <= DUPLICATE_QUOTA_WINDOW_MS;
+    const alsoQuotaMessage = /quota|per day|daily/i.test(String(e.lastError || ''));
+    return withinWindow && alsoQuotaMessage;
+  });
+
+  if (recentlyQuotaExhausted) {
+    const note = `Same daily-quota exhaustion window as key ${maskKey(recentlyQuotaExhausted.key)} — possibly the same Google account/project, which would mean no real extra capacity.`;
+    await rtdbUpdate(KEYS_PATH, {
+      [`${id}/possibleDuplicateAccount`]: true,
+      [`${id}/possibleDuplicateNote`]: note,
+      [`${recentlyQuotaExhausted.id}/possibleDuplicateAccount`]: true,
+      [`${recentlyQuotaExhausted.id}/possibleDuplicateNote`]: `Same daily-quota exhaustion window as key ${maskKey(all.find(e => e.id === id)?.key)} — possibly the same Google account/project, which would mean no real extra capacity.`,
+    });
+  }
 }
 
 async function markKeyBanned(id, message) {

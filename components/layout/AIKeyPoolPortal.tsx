@@ -14,6 +14,8 @@ interface AiKey {
   lastUsedAt: string | null;
   lastSuccessAt: string | null;
   cooldownUntil: number | null;
+  possibleDuplicateAccount?: boolean;
+  possibleDuplicateNote?: string;
 }
 
 function formatCountdown(cooldownUntil: number | null): string {
@@ -78,8 +80,11 @@ export default function AIKeyPoolPortal() {
         setPasteBox('');
         setLabel('');
         setKeys(res.data.keys || []);
-        const { addedCount, skippedCount } = res.data;
-        alert(`${addedCount} key(s) add ho gayi.${skippedCount ? ` ${skippedCount} pehle se maujood thi, skip kar di.` : ''}`);
+        const { addedCount, skippedCount, labelCollisionWarning } = res.data;
+        const warning = labelCollisionWarning
+          ? `\n\n⚠️ Isi label ki ek key pehle se maujood hai. Agar ye same Google account/project se hai, to ye extra daily quota NAHI degi — sirf alag-alag account ki keys hi real capacity badhati hain.`
+          : '';
+        alert(`${addedCount} key(s) add ho gayi.${skippedCount ? ` ${skippedCount} pehle se maujood thi, skip kar di.` : ''}${warning}`);
       } else {
         alert('Key add nahi ho payi: ' + (res.data?.error || 'Unknown error'));
       }
@@ -131,11 +136,16 @@ export default function AIKeyPoolPortal() {
         </div>
 
         <div style={{ borderTop: '1px solid rgba(56,189,248,0.1)', paddingTop: 16 }}>
-          <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: 600 }}>Label (optional)</label>
+          <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: 600 }}>
+            Google account label (recommended — e.g. "raza.gmail")
+          </label>
+          <div style={{ fontSize: 10.5, color: '#64748b', marginBottom: 6, lineHeight: 1.4 }}>
+            Har alag Google account ke liye alag label use karo. Google API se ye khud pata nahi kar sakte ki kaunsi key kaunse account ki hai — agar do keys ek hi account/project se hon to unse extra daily quota nahi milta, sirf label se hi track ho sakta hai.
+          </div>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. Gmail-2 keys"
+            placeholder="e.g. raza.gmail"
             style={{ width: '100%', background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(56,189,248,0.2)', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, marginBottom: 12 }}
           />
           <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 6, fontWeight: 600 }}>
@@ -183,52 +193,58 @@ export default function AIKeyPoolPortal() {
                 key={k.id}
                 style={{
                   background: 'rgba(15,23,42,0.4)',
-                  border: `1px solid ${isGreen ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                  border: `1px solid ${k.possibleDuplicateAccount ? 'rgba(250,204,21,0.4)' : isGreen ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
                   borderRadius: 10,
                   padding: 14,
                   display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12,
+                  flexDirection: 'column',
+                  gap: 8,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                  <span
-                    title={isGreen ? 'Valid — rate limit baaki hai' : 'Rate limited / rejected'}
-                    style={{
-                      width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                      background: isGreen ? '#4ade80' : '#f87171',
-                      boxShadow: isGreen ? '0 0 8px rgba(74,222,128,0.6)' : '0 0 8px rgba(248,113,113,0.6)',
-                    }}
-                  />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: 'white', fontWeight: 600, fontSize: 13, fontFamily: 'monospace' }}>{k.maskedKey}</div>
-                    <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>
-                      {k.label || 'No label'}
-                      {!isGreen && k.lastError ? ` — ${k.lastError}` : ''}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                    <span
+                      title={isGreen ? 'Valid — rate limit baaki hai' : 'Rate limited / rejected'}
+                      style={{
+                        width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                        background: isGreen ? '#4ade80' : '#f87171',
+                        boxShadow: isGreen ? '0 0 8px rgba(74,222,128,0.6)' : '0 0 8px rgba(248,113,113,0.6)',
+                      }}
+                    />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: 'white', fontWeight: 600, fontSize: 13, fontFamily: 'monospace' }}>{k.maskedKey}</div>
+                      <div style={{ color: '#64748b', fontSize: 11, marginTop: 3 }}>
+                        {k.label || 'No label'}
+                        {!isGreen && k.lastError ? ` — ${k.lastError}` : ''}
+                      </div>
+                      {!isGreen && k.cooldownUntil && (
+                        <div style={{ color: '#fb923c', fontSize: 11, marginTop: 2 }}>{formatCountdown(k.cooldownUntil)}</div>
+                      )}
                     </div>
-                    {!isGreen && k.cooldownUntil && (
-                      <div style={{ color: '#fb923c', fontSize: 11, marginTop: 2 }}>{formatCountdown(k.cooldownUntil)}</div>
-                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                    <span
+                      style={{
+                        fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4,
+                        background: isGreen ? 'rgba(34,197,94,0.13)' : 'rgba(239,68,68,0.13)',
+                        color: isGreen ? '#4ade80' : '#f87171',
+                      }}
+                    >
+                      {isGreen ? 'GREEN' : 'RED'}
+                    </span>
+                    <button
+                      onClick={() => handleDelete(k.id, k.maskedKey)}
+                      style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)', padding: '5px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                  <span
-                    style={{
-                      fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4,
-                      background: isGreen ? 'rgba(34,197,94,0.13)' : 'rgba(239,68,68,0.13)',
-                      color: isGreen ? '#4ade80' : '#f87171',
-                    }}
-                  >
-                    {isGreen ? 'GREEN' : 'RED'}
-                  </span>
-                  <button
-                    onClick={() => handleDelete(k.id, k.maskedKey)}
-                    style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)', padding: '5px 10px', borderRadius: 6, fontSize: 11, cursor: 'pointer' }}
-                  >
-                    Delete
-                  </button>
-                </div>
+                {k.possibleDuplicateAccount && (
+                  <div style={{ background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.25)', borderRadius: 6, padding: '6px 10px', color: '#fde68a', fontSize: 11 }}>
+                    ⚠️ Possibly same Google account/project: {k.possibleDuplicateNote}
+                  </div>
+                )}
               </div>
             );
           })}
