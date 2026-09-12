@@ -101,9 +101,14 @@ async function importConversation({ conversation, channel, pageId, pageAccessTok
     const candidateKey = channel === 'whatsapp' ? contactId : safeFirebaseKey(contactId);
     const existingCandidate = await rtdbGet(`candidates/${candidateKey}`);
     if (!existingCandidate) {
+      // `phone` always holds the contact id (PSID for messenger/instagram, real
+      // number for whatsapp) — findCandidateByPhone() in the live webhook path
+      // only ever matches on this field, so leaving it blank for non-WhatsApp
+      // channels (as this used to) meant a backfilled contact who later
+      // messaged again got a second, duplicate candidate record created.
       await rtdbSet(`candidates/${candidateKey}`, {
         id: candidateKey,
-        phone: channel === 'whatsapp' ? contactId : '',
+        phone: contactId,
         metaContactId: channel !== 'whatsapp' ? contactId : '',
         name: other.username || other.name || '',
         channel,

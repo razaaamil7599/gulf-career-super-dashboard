@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { blastWhatsApp, deleteTemplate, getTemplates } from '@/lib/api';
 import BlastReportPanel from './BlastReportPanel';
+import MessengerBroadcastPanel from './MessengerBroadcastPanel';
 import {
   BLAST_PRESETS,
   REPROFILE_BLAST_MESSAGE,
@@ -964,6 +965,8 @@ export default function ActionCenter({
 
         <BlastReportPanel />
       </section>
+
+      <MessengerBroadcastPanel />
     </div>
   );
 }

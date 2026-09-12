@@ -1912,6 +1912,10 @@ function mergeCandidateUpdates(existingCandidate, contactName, profile = {}, ext
     lastRecipientPhone: extraData.recipientPhone || existingCandidate.lastRecipientPhone || '',
     lastRecipientPhoneId: extraData.recipientPhoneId || existingCandidate.lastRecipientPhoneId || '',
     phoneNumberId: extraData.recipientPhoneId || existingCandidate.phoneNumberId || existingCandidate.lastRecipientPhoneId || '',
+    // Explicit channel label ('whatsapp' | 'messenger' | 'instagram') so the
+    // dashboard/mobile app can badge and filter conversations by channel
+    // without needing to infer it from phoneNumberId on every read.
+    channel: extraData.channel || existingCandidate.channel || 'whatsapp',
     wabaId: extraData.wabaId || existingCandidate.wabaId || '',
     businessAccountName: extraData.businessAccountName || existingCandidate.businessAccountName || '',
     updatedAt: new Date().toISOString(),
@@ -2203,6 +2207,7 @@ async function handleCandidateConversation({
     recipientPhoneId,
     wabaId,
     businessAccountName,
+    channel,
   });
 
   // Hard Filter for Gender & Eligibility (AR Studios music video workflow -> Male)

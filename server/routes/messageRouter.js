@@ -20,6 +20,7 @@ const { publishDashboardMessageEvent } = require('../services/dashboardRealtimeS
 const { isAdminPhone, handleAdminCommand } = require('../services/adminControlService');
 const aiKeyPoolService = require('../services/aiKeyPoolService');
 const { backfillMetaChatHistory } = require('../services/metaChatBackfillService');
+const { sendMessengerMessage, sendInstagramMessage, resolveContactChannel } = require('../services/metaChannelService');
 
 function buildMessageLabel(type = 'text', body = '', fileName = '') {
   if (body) return body;
@@ -505,8 +506,19 @@ router.post('/send', async (req, res) => {
 
     const activeSenderPhoneId = senderPhoneId || candidateData?.lastRecipientPhoneId || candidateData?.lastRecipientPhone || null;
 
+    // This route used to always send via WhatsApp regardless of the contact's
+    // actual channel — a Messenger/Instagram contact (a PSID, not a phone
+    // number) got rejected by WhatsApp's API ("Message undeliverable"), so
+    // admins could never manually reply to those from the dashboard chat box
+    // even though the AI bot's own replies already routed correctly.
+    const contactChannel = await resolveContactChannel(activePhone);
+
     let result;
-    if (req.body.templateName) {
+    if (contactChannel === 'messenger') {
+      result = await sendMessengerMessage(activePhone, message);
+    } else if (contactChannel === 'instagram') {
+      result = await sendInstagramMessage(activePhone, message);
+    } else if (req.body.templateName) {
       const { buildComponents, getTemplateLanguage } = require('../services/templateService');
 
       let finalComponents = components || [];
@@ -629,6 +641,11 @@ router.post('/send-voice', uploadMemory.single('audio'), async (req, res) => {
       }
     }
 
+    const voiceChannel = await resolveContactChannel(activePhone);
+    if (voiceChannel !== 'whatsapp') {
+      return res.status(400).json({ error: `Voice notes aren't built for Messenger/Instagram yet — this contact is on ${voiceChannel}.` });
+    }
+
     const mimeType = req.file.mimetype || 'audio/ogg';
     const ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp4') ? 'mp4' : mimeType.includes('mpeg') ? 'mp3' : 'ogg';
     const fileName = `voice_${Date.now()}.${ext}`;
@@ -718,8 +735,17 @@ router.post('/share', async (req, res) => {
     const cleanTo = to.replace(/\D/g, '');
     const { sendTextMessage, sendImageMessage, sendAudioMessage, sendDocumentMessage } = require('../services/whatsappService');
 
+    const shareChannel = await resolveContactChannel(cleanTo);
+    if (shareChannel !== 'whatsapp' && type !== 'text') {
+      return res.status(400).json({ error: `Sharing documents/images/audio isn't built for Messenger/Instagram yet — this contact is on ${shareChannel}.` });
+    }
+
     let result;
-    if (type === 'text') {
+    if (shareChannel === 'messenger' && type === 'text') {
+      result = await sendMessengerMessage(cleanTo, text);
+    } else if (shareChannel === 'instagram' && type === 'text') {
+      result = await sendInstagramMessage(cleanTo, text);
+    } else if (type === 'text') {
       if (!text) return res.status(400).json({ error: 'text body is required for text share' });
       result = await sendTextMessage(cleanTo, text, senderPhoneId);
     } else if (type === 'document') {

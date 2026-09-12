@@ -69,6 +69,24 @@ export const blastWhatsApp = (payload: {
 export const getLatestBlastReport = (lookbackHours: number = 168, minTargets: number = 20) =>
   api.get('/api/blast/latest-report', { params: { lookbackHours, minTargets } }).then((r) => r.data);
 
+// ── Messenger / Instagram recent-contact broadcast ─────────────────────────
+// Meta only allows a standard message to someone who messaged within the
+// last 24 hours, so this targets exactly (and only) those contacts — not a
+// WhatsApp-style unrestricted broadcast, which Messenger/Instagram don't
+// support without paid Sponsored Messages.
+export const previewMessengerRecentBroadcast = (channel: 'messenger' | 'instagram') =>
+  api.get('/api/blast/messenger-recent/preview', { params: { channel } }).then((r) => r.data as { channel: string; eligibleCount: number });
+
+export const sendMessengerRecentBroadcast = (channel: 'messenger' | 'instagram', message: string) =>
+  api.post('/api/blast/messenger-recent', { channel, message }).then((r) => r.data as {
+    success: boolean;
+    channel: string;
+    targeted: number;
+    sent: number;
+    failed: number;
+    results: { id: string; name: string; phone: string; success: boolean; error: string | null }[];
+  });
+
 // ── Messages ────────────────────────────────────────────────────────────────
 export const sendDirectMessage = (phone: string, message: string, templateName?: string, candidateData?: any, languageCode?: string, templateVariables?: string[]) =>
   api.post('/api/messages/send', { phone, message, templateName, candidateData, languageCode, templateVariables }).then((r) => r.data);

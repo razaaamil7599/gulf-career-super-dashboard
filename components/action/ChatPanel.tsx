@@ -47,6 +47,7 @@ interface ChatPanelProps {
     businessAccountName?: string;
     botType?: string;
     bot_name?: string;
+    channel?: 'whatsapp' | 'messenger' | 'instagram';
   } | null;
   onClose: () => void;
   onUpdate: () => void;
@@ -631,6 +632,22 @@ export default function ChatPanel({ candidate, onClose, onUpdate, onCandidateUpd
             <div className="candidate-name-row">
               <span className="candidate-name">{candidate.name}</span>
               {candidate.isAgency && <span className="agency-badge">AGENCY</span>}
+              {candidate.channel && candidate.channel !== 'whatsapp' && (
+                <span
+                  style={{
+                    fontSize: '9.5px',
+                    fontWeight: 900,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    letterSpacing: '0.03em',
+                    background: candidate.channel === 'messenger' ? 'rgba(59,130,246,0.18)' : 'rgba(217,70,239,0.18)',
+                    color: candidate.channel === 'messenger' ? '#60a5fa' : '#e879f9',
+                    border: `1px solid ${candidate.channel === 'messenger' ? '#3b82f6' : '#d946ef'}55`,
+                  }}
+                >
+                  {candidate.channel === 'messenger' ? '📘 FACEBOOK' : '📸 INSTAGRAM'}
+                </span>
+              )}
             </div>
             <div className="candidate-phone" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <span>{candidate.phone}</span>

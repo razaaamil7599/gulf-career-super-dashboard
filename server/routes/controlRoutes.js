@@ -86,40 +86,13 @@ const {
 
 const autoReply = require('../services/autoReplyService');
 const { publishDashboardMessageEvent } = require('../services/dashboardRealtimeService');
-const { sendMessengerMessage, sendInstagramMessage } = require('../services/metaChannelService');
-
-// The manual "reply" box (web dashboard + mobile app) always called WhatsApp's
-// sendMessage() regardless of which channel the contact actually came from —
-// harmless for WhatsApp phone numbers, but for a Messenger/Instagram contact
-// (a PSID, not a real phone number) WhatsApp's API rejects it outright
-// ("Message undeliverable"), so admins could never manually reply to those
-// candidates even though the AI bot's own replies route correctly. Detect the
-// channel from the contact's own message history (the phoneNumberId a past
-// message came in on tells us which surface — WhatsApp phone number id, the
-// Page id, or the Instagram business account id) before choosing how to send.
-async function resolveCandidateChannel(phone) {
-  const pageId = (process.env.PAGE_ID || '').trim();
-  const igId = (process.env.IG_ACCOUNT_ID || '').trim();
-  if (!pageId && !igId) return 'whatsapp';
-
-  try {
-    const thread = await rtdbGet(`messages/${phone}`);
-    if (!thread) return 'whatsapp';
-    const messages = Object.values(thread).sort(
-      (a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime()
-    );
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const pid = String(messages[i]?.phoneNumberId || '').trim();
-      if (!pid) continue;
-      if (pageId && pid === pageId) return 'messenger';
-      if (igId && pid === igId) return 'instagram';
-      return 'whatsapp';
-    }
-  } catch (_) {
-    // fall through to the safe default below
-  }
-  return 'whatsapp';
-}
+const {
+  sendMessengerMessage,
+  sendInstagramMessage,
+  resolveContactChannel: resolveCandidateChannel,
+  getEligibleRecentContacts,
+  bulkSendToRecentContacts,
+} = require('../services/metaChannelService');
 
 // All routes in this file are auth-protected.
 router.use(apiKeyAuth);
@@ -492,6 +465,45 @@ router.post('/messages/send-image', async (req, res) => {
       kind: 'image',
     });
     res.json({ ok: result.success, phone: to, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// GET /messages/bulk-send-recent/preview?channel=messenger|instagram
+// How many contacts on this channel are currently within Meta's 24-hour
+// messaging window and would actually receive a bulk send right now.
+router.get('/messages/bulk-send-recent/preview', async (req, res) => {
+  try {
+    const channel = String(req.query.channel || '').trim();
+    if (channel !== 'messenger' && channel !== 'instagram') {
+      return res.status(400).json({ ok: false, error: 'channel must be messenger or instagram' });
+    }
+    const eligible = await getEligibleRecentContacts(channel);
+    res.json({ ok: true, channel, eligibleCount: eligible.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// POST /messages/bulk-send-recent { channel: 'messenger'|'instagram', message }
+// Sends to every contact on that channel who messaged within the last 24
+// hours — Meta's Messenger/Instagram messaging window means anyone outside
+// that window would just get an API rejection anyway, so this deliberately
+// only targets who's actually reachable right now rather than pretending a
+// WhatsApp-style unrestricted broadcast is possible on these channels.
+router.post('/messages/bulk-send-recent', async (req, res) => {
+  try {
+    const { channel, message } = req.body || {};
+    if (channel !== 'messenger' && channel !== 'instagram') {
+      return res.status(400).json({ ok: false, error: 'channel must be messenger or instagram' });
+    }
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ ok: false, error: 'message required' });
+    }
+
+    const outcome = await bulkSendToRecentContacts(channel, message);
+    res.json({ ok: true, channel, ...outcome });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

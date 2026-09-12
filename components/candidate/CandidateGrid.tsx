@@ -34,6 +34,17 @@ interface Candidate {
   lastRecipientPhoneId?: string;
   lastRecipientPhone?: string;
   businessAccountName?: string;
+  channel?: 'whatsapp' | 'messenger' | 'instagram';
+}
+
+const CHANNEL_BADGES: Record<string, { label: string; bg: string; color: string }> = {
+  whatsapp: { label: 'WhatsApp', bg: 'rgba(34,197,94,0.16)', color: '#4ade80' },
+  messenger: { label: 'Messenger', bg: 'rgba(59,130,246,0.18)', color: '#60a5fa' },
+  instagram: { label: 'Instagram', bg: 'rgba(217,70,239,0.18)', color: '#e879f9' },
+};
+
+function getChannelBadge(candidate: Candidate) {
+  return CHANNEL_BADGES[candidate.channel || 'whatsapp'] || CHANNEL_BADGES.whatsapp;
 }
 
 interface CandidateGridProps {
@@ -103,7 +114,7 @@ function isArsCandidate(candidate: Candidate) {
   return candidate.botType === 'ARS' || candidate.bot_name === 'AR Studios';
 }
 
-function matchesFilters(candidate: Candidate, activeSkill: string, activeCountry: string, searchQuery: string, botFilter: string, arsUnlocked: boolean) {
+function matchesFilters(candidate: Candidate, activeSkill: string, activeCountry: string, searchQuery: string, botFilter: string, arsUnlocked: boolean, channelFilter: string) {
   const query = searchQuery.trim().toLowerCase();
   const matchesSkill = !activeSkill || candidate.skill === activeSkill;
   const matchesCountry = !activeCountry || candidate.country === activeCountry;
@@ -115,12 +126,13 @@ function matchesFilters(candidate: Candidate, activeSkill: string, activeCountry
     !botFilter
     || (botFilter === 'ARS' && isArsCandidate(candidate))
     || (botFilter === 'GCG' && !isArsCandidate(candidate));
+  const matchesChannel = !channelFilter || (candidate.channel || 'whatsapp') === channelFilter;
 
   // ARS candidates stay hidden everywhere (including the "All" tab) until the
   // password is entered — not just when the ARS tab itself is selected.
   const arsGate = !isArsCandidate(candidate) || arsUnlocked;
 
-  return matchesSkill && matchesCountry && matchesQuery && matchesBot && arsGate;
+  return matchesSkill && matchesCountry && matchesQuery && matchesBot && matchesChannel && arsGate;
 }
 
 function mapRealtimeCandidates(raw: Record<string, any> | null | undefined): Candidate[] {
@@ -147,6 +159,7 @@ export default function CandidateGrid({
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [botFilter, setBotFilter] = useState('');
+  const [channelFilter, setChannelFilter] = useState('');
   const [arsUnlocked, setArsUnlocked] = useState(false);
   const [showArsPasswordPrompt, setShowArsPasswordPrompt] = useState(false);
   const [arsPasswordInput, setArsPasswordInput] = useState('');
@@ -158,10 +171,10 @@ export default function CandidateGrid({
   // parameter only because callers still pass it; it no longer changes the
   // behavior here — every call fully re-sorts.)
   const applyFilters = useCallback((source: Candidate[], _forceResort: boolean) => {
-    const filtered = source.filter(candidate => matchesFilters(candidate, activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked));
+    const filtered = source.filter(candidate => matchesFilters(candidate, activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked, channelFilter));
     setCandidates(sortCandidates(filtered));
     setTotal(filtered.length);
-  }, [activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked]);
+  }, [activeSkill, activeCountry, searchQuery, botFilter, arsUnlocked, channelFilter]);
 
   function requestArsAccess() {
     if (arsUnlocked) {
@@ -361,6 +374,41 @@ export default function CandidateGrid({
                 {opt.value === 'ARS' && !arsUnlocked ? `🔒 ${opt.label}` : opt.label}
               </button>
             ))}
+          </div>
+
+          {/* Channel Filter: All / WhatsApp / Facebook (Messenger) / Instagram */}
+          <div style={{ display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(56,189,248,0.18)' }}>
+            {[
+              { value: '', label: 'All' },
+              { value: 'whatsapp', label: 'WhatsApp' },
+              { value: 'messenger', label: 'Facebook' },
+              { value: 'instagram', label: 'Instagram' },
+            ].map((opt) => {
+              const badge = opt.value ? CHANNEL_BADGES[opt.value] : null;
+              const isActive = channelFilter === opt.value;
+              return (
+                <button
+                  key={opt.value || 'all-channels'}
+                  onClick={() => {
+                    setChannelFilter(opt.value);
+                    onSelectionChange([]);
+                  }}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: '5px 14px',
+                    cursor: 'pointer',
+                    border: 'none',
+                    background: isActive ? (badge?.bg || 'rgba(56,189,248,0.15)') : 'rgba(15,23,42,0.6)',
+                    color: isActive ? (badge?.color || '#38bdf8') : '#64748b',
+                    transition: 'all 0.2s',
+                    letterSpacing: '0.03em',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
 
           {selectedIds.length < candidates.length && (
@@ -574,6 +622,25 @@ export default function CandidateGrid({
                             }}
                           >
                             GCG
+                          </span>
+                        )}
+
+                        {/* Channel badge — only shown for non-WhatsApp contacts so a
+                            Messenger/Instagram DM is never mistaken for a WhatsApp chat. */}
+                        {candidate.channel && candidate.channel !== 'whatsapp' && (
+                          <span
+                            style={{
+                              fontSize: 8,
+                              background: getChannelBadge(candidate).bg,
+                              color: getChannelBadge(candidate).color,
+                              fontWeight: 900,
+                              padding: '1px 4px',
+                              borderRadius: 3,
+                              border: `1px solid ${getChannelBadge(candidate).color}55`,
+                              letterSpacing: '0.03em',
+                            }}
+                          >
+                            {candidate.channel === 'messenger' ? 'FACEBOOK' : 'INSTAGRAM'}
                           </span>
                         )}
 

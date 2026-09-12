@@ -8,6 +8,7 @@ const router = express.Router();
 const { bulkBlast, normalizeWhatsAppNumber } = require('../services/whatsappService');
 const { matchCandidates } = require('../services/matchingService');
 const { getLatestBlastReport } = require('../services/blastReportService');
+const { getEligibleRecentContacts, bulkSendToRecentContacts } = require('../services/metaChannelService');
 
 function dedupeTargetsByPhone(targets = []) {
   const seen = new Set();
@@ -126,6 +127,41 @@ router.post('/whatsapp', async (req, res) => {
     });
   } catch (err) {
     console.error('[Blast] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/blast/messenger-recent/preview?channel=messenger|instagram
+router.get('/messenger-recent/preview', async (req, res) => {
+  try {
+    const channel = String(req.query.channel || '').trim();
+    if (channel !== 'messenger' && channel !== 'instagram') {
+      return res.status(400).json({ error: 'channel must be messenger or instagram' });
+    }
+    const eligible = await getEligibleRecentContacts(channel);
+    res.json({ channel, eligibleCount: eligible.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/blast/messenger-recent { channel: 'messenger'|'instagram', message }
+// Meta only allows a standard (non-tagged) message to someone who messaged
+// within the last 24 hours, so — unlike the WhatsApp blast above — this
+// intentionally only targets contacts still inside that window right now.
+router.post('/messenger-recent', async (req, res) => {
+  try {
+    const { channel, message } = req.body || {};
+    if (channel !== 'messenger' && channel !== 'instagram') {
+      return res.status(400).json({ error: 'channel must be messenger or instagram' });
+    }
+    if (!message || !String(message).trim()) {
+      return res.status(400).json({ error: 'message is required' });
+    }
+
+    const outcome = await bulkSendToRecentContacts(channel, message);
+    res.json({ success: true, channel, ...outcome });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
