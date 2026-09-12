@@ -97,14 +97,33 @@ const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 // everyone" for Messenger/Instagram isn't a WhatsApp-style feature we could
 // build; the only thing actually deliverable is targeting contacts who are
 // still inside that window right now.
+//
+// Deliberately checks the actual last INBOUND message timestamp in the
+// contact's own message thread, not candidate.lastInboundAt/updatedAt —
+// those get overwritten by unrelated writes (e.g. a one-time chat-history
+// backfill sets updatedAt to "now" regardless of when the contact really
+// last messaged), which would otherwise mark long-inactive contacts as
+// falsely "eligible" for the last-24-hours window.
 async function getEligibleRecentContacts(channel) {
   const cutoff = Date.now() - RECENT_WINDOW_MS;
   const candidates = await rtdbGetAll('candidates');
-  return candidates.filter((c) => {
-    if (c.channel !== channel) return false;
-    const ts = new Date(c.lastInboundAt || c.updatedAt || 0).getTime();
-    return ts >= cutoff;
-  });
+  const candidatesOnChannel = candidates.filter((c) => c.channel === channel && c.phone);
+
+  const checks = await Promise.all(
+    candidatesOnChannel.map(async (c) => {
+      const thread = await rtdbGet(`messages/${c.phone}`);
+      if (!thread) return null;
+      let lastInboundTs = 0;
+      for (const msg of Object.values(thread)) {
+        if (msg?.direction !== 'inbound') continue;
+        const ts = new Date(msg.timestamp || 0).getTime();
+        if (ts > lastInboundTs) lastInboundTs = ts;
+      }
+      return lastInboundTs >= cutoff ? c : null;
+    })
+  );
+
+  return checks.filter(Boolean);
 }
 
 async function bulkSendToRecentContacts(channel, message) {
