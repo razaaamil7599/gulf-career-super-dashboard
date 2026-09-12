@@ -161,8 +161,30 @@ async function markKeySuccess(id) {
   });
 }
 
-/** Parses Gemini's 429 error body for an explicit RetryInfo.retryDelay (e.g. "51s"), else falls back to a sane default. */
+/**
+ * Parses Gemini's 429 error body for how long to cool this key down.
+ *
+ * Google's own RetryInfo.retryDelay is only trustworthy for a PER-MINUTE
+ * quota hit (it really does clear in ~10-60s there). For a PER-DAY quota hit
+ * it's still present but misleadingly short (observed: "Please retry in
+ * ~19s" for a quota that doesn't actually reset for hours) — blindly trusting
+ * it there marks the key green again almost immediately, it gets retried,
+ * hits the same still-exhausted daily quota, and repeats in a loop for the
+ * rest of the day. This is what produced the "ALL_GEMINI_KEYS_EXHAUSTED"
+ * errors recurring every 10-60 minutes for 12+ straight hours in production.
+ * So: check the QuotaFailure violation's quotaId FIRST — only "PerMinute"
+ * (or unrecognized) quotaIds get Google's short retryDelay; "PerDay" always
+ * gets our own longer cooldown regardless of what retryDelay says.
+ */
 function extractRetryDelayMs(errorData) {
+  const violations = errorData?.error?.details?.find(
+    (d) => String(d['@type'] || '').includes('QuotaFailure')
+  )?.violations || [];
+  const quotaId = String(violations[0]?.quotaId || '');
+  const isDailyQuota = /perday/i.test(quotaId) || /per day|daily/i.test(String(errorData?.error?.message || ''));
+
+  if (isDailyQuota) return QUOTA_EXHAUSTED_COOLDOWN_MS;
+
   try {
     const details = errorData?.error?.details || [];
     const retryInfo = details.find(d => String(d['@type'] || '').includes('RetryInfo'));
@@ -175,10 +197,6 @@ function extractRetryDelayMs(errorData) {
     // fall through to default
   }
 
-  const message = String(errorData?.error?.message || '').toLowerCase();
-  if (message.includes('quota') || message.includes('per day') || message.includes('daily')) {
-    return QUOTA_EXHAUSTED_COOLDOWN_MS;
-  }
   return RATE_LIMIT_COOLDOWN_MS;
 }
 
