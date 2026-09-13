@@ -335,11 +335,11 @@ export default function BotConfigPortal() {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 5 }}>Custom Instructions (One rule per line - e.g. Visa ticket is free. Service charge 25000 INR.)</label>
+                <label style={{ display: 'block', fontSize: 11, color: '#94a3b8', marginBottom: 5 }}>Custom Instructions (One rule per line - e.g. Office service charge 25000 INR. Never say visa/ticket is free.)</label>
                 <textarea
                   value={rawInstructions}
                   onChange={(e) => setRawInstructions(e.target.value)}
-                  placeholder="Visa ticket is free.&#10;Office service charge of 25,000 INR must be paid."
+                  placeholder="Office service charge of 25,000 INR must be paid.&#10;Never say or imply visa or ticket is free."
                   rows={6}
                   style={{ width: '100%', background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(56,189,248,0.2)', borderRadius: 6, padding: '8px 12px', color: 'white', fontSize: 13, fontFamily: 'monospace' }}
                 />
