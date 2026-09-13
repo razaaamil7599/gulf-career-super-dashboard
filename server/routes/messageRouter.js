@@ -261,12 +261,18 @@ router.post('/backfill-meta-chats', async (req, res) => {
 // retention window expires it too. Safe to re-run (skips anything already
 // archived).
 router.post('/rescue-recent-media', async (req, res) => {
+  const days = Number(req.query.days) || 5;
+  // Many sequential Meta API calls can easily exceed the platform's gateway
+  // timeout — respond immediately and let it run in the background; check
+  // system_controls/last_media_rescue for the result.
+  res.json({ success: true, started: true, days });
   try {
-    const days = Number(req.query.days) || 5;
     const stats = await rescueRecentMedia(days);
-    res.json({ success: true, stats });
+    console.log('[Media Rescue] Finished:', JSON.stringify(stats));
+    const { rtdbSet } = require('../services/firebaseService');
+    await rtdbSet('system_controls/last_media_rescue', { ...stats, finishedAt: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[Media Rescue] Failed:', err.message);
   }
 });
 
