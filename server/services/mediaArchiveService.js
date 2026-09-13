@@ -19,6 +19,7 @@
  */
 
 const { fetchMediaAsset } = require('./whatsappService');
+const { rtdbGet, rtdbUpdate } = require('./firebaseService');
 
 const MAX_ARCHIVE_BYTES = 4 * 1024 * 1024; // 4MB raw (~5.3MB after base64 inflation)
 
@@ -42,7 +43,45 @@ async function archiveMediaAsDataUrl(mediaId, senderPhoneIdOrPhone = null) {
   }
 }
 
+/**
+ * One-time rescue pass: goes through recent inbound messages that still only
+ * have a mediaId (no archived mediaUrl yet — i.e. everything that predates
+ * the fix above) and tries to archive whatever Meta will still hand back.
+ * Anything older than `days` is skipped outright since Meta's retention
+ * window means it's almost certainly already gone.
+ */
+async function rescueRecentMedia(days = 5) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const all = (await rtdbGet('messages')) || {};
+
+  const candidates = [];
+  for (const [phone, thread] of Object.entries(all)) {
+    for (const [key, m] of Object.entries(thread || {})) {
+      if (m?.mediaId && !m?.mediaUrl && m?.direction === 'inbound') {
+        const ts = new Date(m.timestamp || 0).getTime();
+        if (ts >= cutoff) candidates.push({ phone, key, mediaId: m.mediaId, phoneNumberId: m.phoneNumberId });
+      }
+    }
+  }
+  candidates.sort((a, b) => b.key.localeCompare(a.key));
+
+  let rescued = 0;
+  let failed = 0;
+  for (const c of candidates) {
+    const dataUrl = await archiveMediaAsDataUrl(c.mediaId, c.phoneNumberId);
+    if (dataUrl) {
+      await rtdbUpdate(`messages/${c.phone}/${c.key}`, { mediaUrl: dataUrl });
+      rescued++;
+    } else {
+      failed++;
+    }
+  }
+
+  return { attempted: candidates.length, rescued, failed };
+}
+
 module.exports = {
   archiveMediaAsDataUrl,
+  rescueRecentMedia,
   MAX_ARCHIVE_BYTES,
 };

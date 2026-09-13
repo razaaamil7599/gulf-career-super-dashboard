@@ -21,6 +21,7 @@ const { isAdminPhone, handleAdminCommand } = require('../services/adminControlSe
 const aiKeyPoolService = require('../services/aiKeyPoolService');
 const { backfillMetaChatHistory } = require('../services/metaChatBackfillService');
 const { sendMessengerMessage, sendInstagramMessage, resolveContactChannel } = require('../services/metaChannelService');
+const { rescueRecentMedia } = require('../services/mediaArchiveService');
 
 function buildMessageLabel(type = 'text', body = '', fileName = '') {
   if (body) return body;
@@ -249,6 +250,20 @@ router.post('/backfill-meta-chats', async (req, res) => {
       return res.status(400).json({ error: 'PAGE_ID / PAGE_ACCESS_TOKEN not configured on the server.' });
     }
     const stats = await backfillMetaChatHistory({ pageId, pageAccessToken });
+    res.json({ success: true, stats });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/messages/rescue-recent-media?days=5 — One-time pass to archive
+// recent inbound media that predates the auto-archive fix, before Meta's
+// retention window expires it too. Safe to re-run (skips anything already
+// archived).
+router.post('/rescue-recent-media', async (req, res) => {
+  try {
+    const days = Number(req.query.days) || 5;
+    const stats = await rescueRecentMedia(days);
     res.json({ success: true, stats });
   } catch (err) {
     res.status(500).json({ error: err.message });
