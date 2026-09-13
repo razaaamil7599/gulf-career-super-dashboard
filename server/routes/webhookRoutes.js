@@ -21,6 +21,7 @@ const aiAgentService = require('../services/aiAgentService');
 const whatsappService = require('../services/whatsappService');
 const { handleCandidateConversation } = require('../services/candidateConversationService');
 const { runWithGate } = require('../services/aiConcurrencyGateService');
+const { archiveMediaAsDataUrl } = require('../services/mediaArchiveService');
 const { matchCandidates } = require('../services/matchingService');
 const { appendChatLog } = require('../services/googleSheetsService');
 const { resolveIdentity } = require('../services/identityService');
@@ -445,7 +446,7 @@ router.post('/', async (req, res) => {
       }
     }
 
-    await rtdbPush(`messages/${from}`, messageData);
+    const pushedMessageKey = await rtdbPush(`messages/${from}`, messageData);
     await appendChatLog({
       phone: from,
       message: storedBody,
@@ -453,6 +454,20 @@ router.post('/', async (req, res) => {
       timestamp: messageData.timestamp,
       channel: channel || 'whatsapp',
     });
+
+    // Fire-and-forget: WhatsApp/Meta only keeps a media file retrievable by
+    // mediaId for a limited window after it was sent — after that it 404s
+    // forever with no way to recover it. Archive it into our own database
+    // now, while it's still fetchable, so an admin opening this chat weeks
+    // later doesn't hit "MEDIA_FETCH_FAILED". Not awaited: must not delay
+    // Meta's webhook ack or the candidate's reply on a large download.
+    if (mediaId && (channel || 'whatsapp') === 'whatsapp') {
+      archiveMediaAsDataUrl(mediaId, accountInfo.phoneNumberId || recipientPhoneId)
+        .then((dataUrl) => {
+          if (dataUrl) return rtdbUpdate(`messages/${from}/${pushedMessageKey}`, { mediaUrl: dataUrl });
+        })
+        .catch((err) => console.error(`[Webhook] Media archive failed for ${mediaId}:`, err.message));
+    }
 
     // Fire-and-forget: gated so a second candidate's AI turn doesn't run
     // concurrently with one already in flight (see aiConcurrencyGateService),

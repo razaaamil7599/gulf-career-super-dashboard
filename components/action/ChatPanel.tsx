@@ -74,8 +74,13 @@ function isMediaPlaceholder(text: string = '') {
 }
 
 function getMediaSource(message: Message) {
+  // A permanently-archived URL (our own storage) must win over the live
+  // mediaId fetch — WhatsApp's own media CDN only keeps a file retrievable
+  // for a limited window after it was sent, so an old message's mediaId
+  // eventually 404s forever while our archived copy still works.
+  if (message.mediaUrl) return message.mediaUrl;
   if (message.mediaId) return `/api/messages/media/${encodeURIComponent(message.mediaId)}`;
-  return message.mediaUrl || null;
+  return null;
 }
 
 function getVisibleText(message: Message) {
