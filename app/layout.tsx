@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import DesktopSyncClient from "@/components/layout/DesktopSyncClient";
 
 export const metadata: Metadata = {
   title: "Gulf Career Super Dashboard | A.R. Khan IT Solution",
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
       <body className="bg-animated min-h-screen antialiased">
+        <DesktopSyncClient />
         {children}
       </body>
     </html>
