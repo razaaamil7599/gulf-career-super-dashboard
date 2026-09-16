@@ -18,7 +18,19 @@ export async function GET(req: NextRequest) {
     const skill = searchParams.get('skill') || '';
 
     const db = getFirebaseAdminDb();
-    const snapshot = await db.ref('candidates').once('value');
+
+    // The default dashboard poll (no search, no skill filter) is by far the
+    // most frequent call to this route and only ever needs the most
+    // recently active candidates — loading and JSON-parsing all 4000+
+    // candidate records into memory on every few-second refresh is what was
+    // repeatedly crashing the free-tier instance with a heap OOM (every
+    // crash briefly took the whole dashboard down, which is what made chats
+    // look like they kept "disappearing"). Only fall back to a full scan
+    // when the caller is actually searching/filtering across the whole pool.
+    const needsFullScan = Boolean(search || (skill && skill !== 'All'));
+    const snapshot = needsFullScan
+      ? await db.ref('candidates').once('value')
+      : await db.ref('candidates').orderByChild('lastInboundAt').limitToLast(300).once('value');
     const candidatesMap = snapshot.val() || {};
     let candidates = Object.keys(candidatesMap).map(id => ({ id, ...candidatesMap[id] }));
 
