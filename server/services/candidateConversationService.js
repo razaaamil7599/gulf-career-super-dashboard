@@ -5,6 +5,7 @@ const {
   rtdbSet,
   rtdbUpdate,
   safeFirebaseKey,
+  getDb,
 } = require('./firebaseService');
 const { sendMessage, sendImageMessage, sendDocumentMessage, sendAudioMessage } = require('./whatsappService');
 const { sendMessengerMessage, sendInstagramMessage } = require('./metaChannelService');
@@ -708,6 +709,21 @@ function buildArsFallbackResponse({ candidate, contactName, replyLanguage, admin
 async function findCandidateByPhone(phone) {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
+
+  // This runs on every single incoming message from every candidate (both
+  // GCG and ARS bots) — doing a full rtdbGetAll('candidates') here on every
+  // message was the primary cause of the server's repeated heap-OOM crash
+  // loop, independent of anything happening on the dashboard side. An
+  // indexed exact-match query covers the overwhelming majority of lookups
+  // (phone numbers are stored consistently); only fall back to the full
+  // scan for the rarer country-code-prefix mismatch case.
+  const db = getDb();
+  const exactSnap = await db.ref('candidates').orderByChild('phone').equalTo(normalized).once('value');
+  const exactVal = exactSnap.val();
+  if (exactVal) {
+    const [id, data] = Object.entries(exactVal)[0];
+    return { id, ...data };
+  }
 
   const candidates = await rtdbGetAll('candidates');
   return candidates.find(candidate => {

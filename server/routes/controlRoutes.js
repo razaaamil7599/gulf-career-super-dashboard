@@ -60,6 +60,7 @@ const {
   rtdbSet,
   rtdbGetAll,
   safeFirebaseKey,
+  getDb,
 } = require('../services/firebaseService');
 
 const {
@@ -909,8 +910,12 @@ router.post('/knowledge-base', async (req, res) => {
 // Hot Leads / Suspects (stored on the candidate record, keyed by phone)
 // ─────────────────────────────────────────────────────────────────────────────
 async function findCandidateByPhone(phone) {
-  const all = (await rtdbGetAll('candidates')) || [];
-  return all.find((c) => String(c.phone || '').replace(/\D/g, '') === phone) || null;
+  const db = getDb();
+  const snap = await db.ref('candidates').orderByChild('phone').equalTo(phone).once('value');
+  const val = snap.val();
+  if (!val) return null;
+  const [id, data] = Object.entries(val)[0];
+  return { id, ...data };
 }
 
 router.post('/leads/suspects/add', async (req, res) => {

@@ -4,6 +4,7 @@ const {
   rtdbPush,
   rtdbSet,
   safeFirebaseKey,
+  getDb,
 } = require('./firebaseService');
 const { appendChatLog, appendAgentOutputLog } = require('./googleSheetsService');
 const { publishDashboardMessageEvent } = require('./dashboardRealtimeService');
@@ -461,8 +462,12 @@ async function queueAdminApprovalRequest({
 async function findCandidateByPhone(phone = '') {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
-  const candidates = await rtdbGetAll('candidates');
-  return (candidates || []).find((candidate) => normalizePhone(candidate.phone) === normalized) || null;
+  const db = getDb();
+  const snap = await db.ref('candidates').orderByChild('phone').equalTo(normalized).once('value');
+  const val = snap.val();
+  if (!val) return null;
+  const [id, data] = Object.entries(val)[0];
+  return { id, ...data };
 }
 
 async function getRecentMessages(phone = '', limit = 8) {
