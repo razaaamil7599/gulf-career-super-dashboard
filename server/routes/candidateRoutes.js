@@ -6,7 +6,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { matchCandidates, getSkillCounts, getCountryCounts } = require('../services/matchingService');
+const { matchCandidates, getCandidateCounts } = require('../services/matchingService');
 const { rtdbGetAll, rtdbUpdate } = require('../services/firebaseService');
 const { runCandidateProfileBackfill } = require('../services/candidateBackfillService');
 
@@ -31,7 +31,7 @@ router.get('/', async (req, res) => {
 // GET /api/candidates/counts — sidebar counters
 router.get('/counts', async (req, res) => {
   try {
-    const [skills, countries] = await Promise.all([getSkillCounts(), getCountryCounts()]);
+    const { skills, countries } = await getCandidateCounts();
     res.json({ success: true, skills, countries });
   } catch (err) {
     res.status(500).json({ error: err.message });

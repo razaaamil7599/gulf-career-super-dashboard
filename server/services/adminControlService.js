@@ -9,7 +9,7 @@ const { appendChatLog, appendAgentOutputLog } = require('./googleSheetsService')
 const { publishDashboardMessageEvent } = require('./dashboardRealtimeService');
 const { sendMessage, bulkBlast, createMetaTemplate, downloadMedia } = require('./whatsappService');
 const { getAvailableTemplates } = require('./templateService');
-const { matchCandidates, getSkillCounts, getCountryCounts } = require('./matchingService');
+const { matchCandidates, getCandidateCounts, getCountryCounts } = require('./matchingService');
 const { transcribeAudio } = require('./aiAgentService');
 
 const ADMIN_AI_PROFILE_PATH = 'system_controls/admin_ai_profile';
@@ -794,10 +794,7 @@ async function handleAdminCommand({ from = '', body = '', mediaId = '', mimeType
   }
 
   if (lower === 'counts' || lower === 'categories' || textLooksLikeCountsQuery(text)) {
-    const [skillCounts, countryCounts] = await Promise.all([
-      getSkillCounts(),
-      getCountryCounts(),
-    ]);
+    const { skills: skillCounts, countries: countryCounts } = await getCandidateCounts();
 
     const replyText = [
       formatCountsAsLines(skillCounts, { title: 'Skill categories' }),
