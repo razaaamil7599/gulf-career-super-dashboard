@@ -37,14 +37,14 @@ RUN npm run build
 # RUN npm prune --production
 
 ENV NODE_ENV=production
-# The actual candidates dataset is only ~2MB, but the server was repeatedly
-# OOM-crashing ("JavaScript heap out of memory") well before using the
-# free-tier instance's real 512MB RAM — V8 was self-limiting its heap to
-# ~256MB (its own conservative default when it can't cleanly read the
-# container's true memory ceiling). Setting the limit explicitly lets it use
-# most of what's actually available, leaving headroom for Node/native
-# overhead outside the JS heap.
-ENV NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=440"
+# NOTE: raising --max-old-space-size here was tried and reverted — it made
+# the free-tier instance die silently (OS-level kill, no V8 error at all)
+# instead of the original clean "heap out of memory" crash, which points to
+# the container's *actual* usable memory being close to V8's original
+# auto-detected ~256MB ceiling, not the nominal 512MB. The real fix is
+# using less memory (see server/services/matchingService.js's candidate
+# counts cache), not raising this ceiling.
+ENV NODE_OPTIONS=--openssl-legacy-provider
 ENV PORT=8080
 EXPOSE 8080
 

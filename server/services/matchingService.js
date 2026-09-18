@@ -97,15 +97,39 @@ async function matchCandidates({ skill, country, search } = {}) {
 // rtdbGetAll('candidates') and were called together via Promise.all from
 // the /counts route — two concurrent full-table JSON parses of the whole
 // candidate pool at once, which was doubling the OOM risk on every counts
-// request. getCandidateCounts() does the fetch once and computes both
-// breakdowns from that same array.
+// request. Even a single full scan turned out to be enough to crash the
+// free-tier instance on its own (the candidate dataset is genuinely tiny,
+// ~2MB — the container's real usable memory is just very tight), so the
+// result is now cached in memory for a few minutes instead of recomputed
+// on every poll. Every dashboard tab/device hitting /counts shares the
+// same cached value; only one full scan happens per refresh window no
+// matter how many clients are polling.
+const COUNTS_CACHE_TTL_MS = 5 * 60 * 1000;
+let countsCache = null;
+let countsCacheAt = 0;
+let countsCacheInFlight = null;
+
 async function getCandidateCounts() {
-  const allCandidates = await rtdbGetAll('candidates');
-  const candidates = Array.isArray(allCandidates) ? allCandidates : [];
-  return {
-    skills: buildCategoryCounts(candidates),
-    countries: buildCountryCounts(candidates),
-  };
+  const isFresh = countsCache && Date.now() - countsCacheAt < COUNTS_CACHE_TTL_MS;
+  if (isFresh) return countsCache;
+  if (countsCacheInFlight) return countsCacheInFlight;
+
+  countsCacheInFlight = (async () => {
+    try {
+      const allCandidates = await rtdbGetAll('candidates');
+      const candidates = Array.isArray(allCandidates) ? allCandidates : [];
+      countsCache = {
+        skills: buildCategoryCounts(candidates),
+        countries: buildCountryCounts(candidates),
+      };
+      countsCacheAt = Date.now();
+      return countsCache;
+    } finally {
+      countsCacheInFlight = null;
+    }
+  })();
+
+  return countsCacheInFlight;
 }
 
 async function getSkillCounts() {
