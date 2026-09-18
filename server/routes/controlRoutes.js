@@ -62,6 +62,7 @@ const {
   safeFirebaseKey,
   getDb,
 } = require('../services/firebaseService');
+const { getCachedCandidates } = require('../services/matchingService');
 
 const {
   sendMessage,
@@ -174,71 +175,91 @@ router.get('/conversations', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const search = String(req.query.search || '').replace(/\D/g, '');
     const botTypeFilter = String(req.query.botType || '').trim();
-    // NOTE: must use rtdbGet (raw object keyed by phone), not rtdbGetAll (which
-    // flattens to an array-with-id) — Object.entries() on the flattened array
-    // would yield array indices as "phone" instead of the real phone numbers.
-    const all = (await rtdbGet('messages')) || {};
-    const candidatesMap = (await rtdbGetAll('candidates')) || {};
 
-    // Build a phone -> name/lead/botType index from candidates (best-effort).
-    const nameIndex = {};
-    const leadIndex = {};
-    const botTypeIndex = {};
-    Object.values(candidatesMap).forEach((c) => {
-      if (!c || !c.phone) return;
+    // This used to rtdbGet('messages') — the ENTIRE message tree for every
+    // candidate, including every archived document/photo (embedded as
+    // base64 directly on the message record). That node had grown to
+    // ~65MB; JSON-parsing all of it just to show a conversation list (which
+    // only needs the last message + a couple of counts per phone) was
+    // crashing the free-tier instance's heap on every call — this is the
+    // mobile app's main chat-list endpoint, so it was firing repeatedly.
+    // Candidate name/lead/botType/unreadCount now come from the shared
+    // candidates cache (tiny, no messages involved), and only the single
+    // most recent message per conversation is fetched per phone via an
+    // indexed limitToLast(1) query instead of the whole thread.
+    const candidates = await getCachedCandidates();
+
+    const bySkill = (c) => {
+      if (!c || !c.phone) return false;
       const digits = String(c.phone).replace(/\D/g, '');
-      if (!digits) return;
-      nameIndex[digits] = c.name || c.fullName || '';
-      if (c.isHotLead) leadIndex[digits] = { isHotLead: true, hotLeadCategory: c.leadCategory || '' };
-      // Candidate Pool tabs on the web dashboard split by bot_name, not a "botType" field.
-      botTypeIndex[digits] = c.bot_name === 'AR Studios' ? 'ARS' : 'GCG';
-    });
+      if (!digits) return false;
+      if (search && !digits.includes(search)) return false;
+      const botType = c.bot_name === 'AR Studios' ? 'ARS' : 'GCG';
+      if (botTypeFilter && botType !== botTypeFilter) return false;
+      return true;
+    };
+
+    const candidatesSorted = candidates
+      .filter(bySkill)
+      .sort((a, b) => {
+        const ta = String(a.lastInboundAt || a.updatedAt || a.createdAt || '');
+        const tb = String(b.lastInboundAt || b.updatedAt || b.createdAt || '');
+        return tb.localeCompare(ta);
+      })
+      .slice(0, limit);
 
     const overrides = await autoReply.getAllOverrides();
+    const db = getDb();
 
-    const items = [];
-    for (const [phone, threadMap] of Object.entries(all)) {
-      if (search && !phone.includes(search)) continue;
-      const history = flattenHistory(threadMap);
-      const last = history[history.length - 1] || null;
-      const unreadCount = history.filter(
-        (m) => m.direction === 'inbound' && !m.readAt,
-      ).length;
-      items.push({
-        phone,
-        name: nameIndex[phone] || '',
-        lastMessage: last
-          ? {
-              body: last.body || '',
-              type: last.type || 'text',
-              direction: last.direction || '',
-              status: last.status || '',
-              timestamp: last.timestamp || null,
-              messageId: last.wamId || last.messageId || last.msgId || null,
-            }
-          : null,
-        unreadCount,
-        autoReply: overrides[safeFirebaseKey(phone)]
-          ? overrides[safeFirebaseKey(phone)].mode
+    const items = await Promise.all(candidatesSorted.map(async (c) => {
+      const digits = String(c.phone).replace(/\D/g, '');
+      const botType = c.bot_name === 'AR Studios' ? 'ARS' : 'GCG';
+      let last = null;
+      try {
+        const snap = await db.ref(`messages/${digits}`).orderByKey().limitToLast(1).once('value');
+        const val = snap.val();
+        if (val) {
+          const msg = Object.values(val)[0];
+          last = {
+            body: msg.body || '',
+            type: msg.type || 'text',
+            direction: msg.direction || '',
+            status: msg.status || '',
+            timestamp: msg.timestamp || null,
+            messageId: msg.wamId || msg.messageId || msg.msgId || null,
+          };
+        }
+      } catch (err) {
+        console.error(`[Conversations] last-message fetch failed for ${digits}:`, err.message);
+      }
+
+      return {
+        phone: digits,
+        name: c.name || c.fullName || '',
+        lastMessage: last,
+        unreadCount: Number(c.unreadCount || 0),
+        autoReply: overrides[safeFirebaseKey(digits)]
+          ? overrides[safeFirebaseKey(digits)].mode
           : 'inherit',
-        messageCount: history.length,
-        isHotLead: Boolean(leadIndex[phone]?.isHotLead),
-        hotLeadCategory: leadIndex[phone]?.hotLeadCategory || '',
-        botType: botTypeIndex[phone] || 'GCG',
-      });
-    }
+        // No longer computed — it required loading the full message thread
+        // (including embedded media) for every conversation, which is what
+        // was crashing the server. Not currently used for anything beyond
+        // display, so it's dropped rather than kept at the cost of the
+        // stability issue it caused.
+        messageCount: null,
+        isHotLead: Boolean(c.isHotLead),
+        hotLeadCategory: c.leadCategory || '',
+        botType,
+      };
+    }));
 
-    const filteredItems = botTypeFilter
-      ? items.filter((it) => it.botType === botTypeFilter)
-      : items;
-
-    filteredItems.sort((a, b) => {
+    items.sort((a, b) => {
       const ta = String(a.lastMessage?.timestamp || '');
       const tb = String(b.lastMessage?.timestamp || '');
       return tb.localeCompare(ta);
     });
 
-    res.json({ ok: true, total: filteredItems.length, items: filteredItems.slice(0, limit) });
+    res.json({ ok: true, total: items.length, items });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
@@ -980,50 +1001,59 @@ const REMINDER_OVERDUE_MS = 24 * 60 * 60 * 1000; // 24h = overdue
 
 router.get('/reminders', async (_req, res) => {
   try {
-    const allMessages = (await rtdbGetAll('messages')) || [];
-    const candidatesMap = (await rtdbGetAll('candidates')) || [];
+    // This used to rtdbGetAll('messages') — the entire ~65MB message tree
+    // (including every archived document/photo embedded as base64) just to
+    // find the handful of candidates with an unanswered inbound message.
+    // candidate.unreadCount/lastInboundAt already track exactly that on the
+    // (tiny, cached) candidate record, so only those few candidates need a
+    // lightweight per-phone last-message fetch — not the whole dataset.
+    const candidates = await getCachedCandidates();
     const reminderState = (await rtdbGet('reminder_state')) || {};
-
-    const nameIndex = {};
-    candidatesMap.forEach((c) => {
-      const digits = String(c.phone || '').replace(/\D/g, '');
-      if (digits) nameIndex[digits] = c.name || c.fullName || '';
-    });
-
     const now = Date.now();
-    const items = [];
-    allMessages.forEach((thread) => {
-      const phone = thread.id;
-      if (!phone) return;
-      const history = flattenHistory(thread);
-      if (history.length === 0) return;
-      const last = history[history.length - 1];
-      if (last.direction !== 'inbound') return;
 
-      const ts = new Date(last.timestamp || 0).getTime();
-      if (!ts) return;
-      const ageMs = now - ts;
-      if (ageMs < REMINDER_THRESHOLD_MS) return;
-
-      const state = reminderState[safeFirebaseKey(phone)];
-      if (state?.doneAt && new Date(state.doneAt).getTime() > ts) return;
-      if (state?.dismissedAt && new Date(state.dismissedAt).getTime() > ts) return;
-
-      const reminderTime = new Date(ts).toISOString().replace(/\.\d{3}Z$/, '');
-      items.push({
-        id: phone,
-        phone,
-        customerName: nameIndex[phone] || 'Unknown',
-        reminderTime,
-        reason: 'Customer message not replied yet',
-        originalMessage: last.body || '',
-        direction: 'inbound',
-        createdAt: ts,
-        status: 'pending',
-        notified: false,
-        isOverdue: ageMs > REMINDER_OVERDUE_MS,
-      });
+    const candidatesToCheck = candidates.filter((c) => {
+      if (!c.phone || !Number(c.unreadCount || 0)) return false;
+      const ts = new Date(c.lastInboundAt || c.updatedAt || 0).getTime();
+      return ts && now - ts >= REMINDER_THRESHOLD_MS;
     });
+
+    const db = getDb();
+    const items = (await Promise.all(candidatesToCheck.map(async (c) => {
+      const phone = String(c.phone).replace(/\D/g, '');
+      if (!phone) return null;
+      try {
+        const snap = await db.ref(`messages/${phone}`).orderByKey().limitToLast(1).once('value');
+        const val = snap.val();
+        const last = val ? Object.values(val)[0] : null;
+        if (!last || last.direction !== 'inbound') return null;
+
+        const ts = new Date(last.timestamp || 0).getTime();
+        if (!ts) return null;
+        const ageMs = now - ts;
+        if (ageMs < REMINDER_THRESHOLD_MS) return null;
+
+        const state = reminderState[safeFirebaseKey(phone)];
+        if (state?.doneAt && new Date(state.doneAt).getTime() > ts) return null;
+        if (state?.dismissedAt && new Date(state.dismissedAt).getTime() > ts) return null;
+
+        return {
+          id: phone,
+          phone,
+          customerName: c.name || c.fullName || 'Unknown',
+          reminderTime: new Date(ts).toISOString().replace(/\.\d{3}Z$/, ''),
+          reason: 'Customer message not replied yet',
+          originalMessage: last.body || '',
+          direction: 'inbound',
+          createdAt: ts,
+          status: 'pending',
+          notified: false,
+          isOverdue: ageMs > REMINDER_OVERDUE_MS,
+        };
+      } catch (err) {
+        console.error(`[Reminders] last-message fetch failed for ${phone}:`, err.message);
+        return null;
+      }
+    }))).filter(Boolean);
 
     items.sort((a, b) => a.createdAt - b.createdAt);
     res.json({ success: true, reminders: items });
