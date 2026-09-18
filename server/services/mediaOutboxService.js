@@ -52,8 +52,27 @@ async function ackOutboxItem(phone, msgId) {
   await db.ref(`${OUTBOX_PATH}/${phone}/${msgId}`).remove();
 }
 
+/**
+ * The dashboard/desktop app doesn't do an explicit pull-and-ack round trip
+ * like the mobile app does — it just loads a phone's chat history whenever
+ * an admin opens it. Whenever that happens, treat it the same as a device
+ * having "come online and picked up the mail": hand back whatever's
+ * waiting for that phone and clear it from the outbox in the same call.
+ */
+async function getAndClearOutboxForPhone(phone) {
+  if (!phone) return {};
+  const db = getDb();
+  const ref = db.ref(`${OUTBOX_PATH}/${phone}`);
+  const snap = await ref.once('value');
+  const val = snap.val();
+  if (!val) return {};
+  await ref.remove();
+  return val;
+}
+
 module.exports = {
   queueMediaForDelivery,
   getPendingOutbox,
   ackOutboxItem,
+  getAndClearOutboxForPhone,
 };

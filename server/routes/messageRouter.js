@@ -22,6 +22,7 @@ const aiKeyPoolService = require('../services/aiKeyPoolService');
 const { backfillMetaChatHistory } = require('../services/metaChatBackfillService');
 const { sendMessengerMessage, sendInstagramMessage, resolveContactChannel } = require('../services/metaChannelService');
 const { rescueRecentMedia } = require('../services/mediaArchiveService');
+const { getAndClearOutboxForPhone } = require('../services/mediaOutboxService');
 
 function buildMessageLabel(type = 'text', body = '', fileName = '') {
   if (body) return body;
@@ -600,25 +601,30 @@ router.get('/history/:phone', async (req, res) => {
     let { phone } = req.params;
     phone = phone.replace(/\D/g, '');
 
-    let mergedMessages = {};
-    const direct = await rtdbGet(`messages/${phone}`);
-    if (direct && typeof direct === 'object') {
-      Object.assign(mergedMessages, direct);
+    const phoneVariants = [phone];
+    if (phone.length === 10) {
+      phoneVariants.push(`91${phone}`, `92${phone}`);
+    } else if (phone.length === 12 && (phone.startsWith('91') || phone.startsWith('92'))) {
+      phoneVariants.push(phone.substring(2));
     }
 
-    if (phone.length === 10) {
-      const m91 = await rtdbGet(`messages/91${phone}`);
-      if (m91 && typeof m91 === 'object') Object.assign(mergedMessages, m91);
-      
-      const m92 = await rtdbGet(`messages/92${phone}`);
-      if (m92 && typeof m92 === 'object') Object.assign(mergedMessages, m92);
-    } else if (phone.length === 12) {
-      if (phone.startsWith('91')) {
-        const mSuffix = await rtdbGet(`messages/${phone.substring(2)}`);
-        if (mSuffix && typeof mSuffix === 'object') Object.assign(mergedMessages, mSuffix);
-      } else if (phone.startsWith('92')) {
-        const mSuffix = await rtdbGet(`messages/${phone.substring(2)}`);
-        if (mSuffix && typeof mSuffix === 'object') Object.assign(mergedMessages, mSuffix);
+    let mergedMessages = {};
+    for (const variant of phoneVariants) {
+      const thread = await rtdbGet(`messages/${variant}`);
+      if (thread && typeof thread === 'object') Object.assign(mergedMessages, thread);
+    }
+
+    // The dashboard/desktop app opening this chat is, for media purposes,
+    // the same as a device coming online to collect its mail: hand back
+    // anything waiting in the outbox for this phone (any archived-at-
+    // receipt document/photo) and clear it out at the same time, so it
+    // never has to sit there after it's actually been delivered somewhere.
+    for (const variant of phoneVariants) {
+      const pending = await getAndClearOutboxForPhone(variant);
+      for (const [msgId, item] of Object.entries(pending)) {
+        if (mergedMessages[msgId]) {
+          mergedMessages[msgId] = { ...mergedMessages[msgId], mediaUrl: item.mediaUrl };
+        }
       }
     }
 
