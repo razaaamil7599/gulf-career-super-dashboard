@@ -37,7 +37,14 @@ RUN npm run build
 # RUN npm prune --production
 
 ENV NODE_ENV=production
-ENV NODE_OPTIONS=--openssl-legacy-provider
+# The actual candidates dataset is only ~2MB, but the server was repeatedly
+# OOM-crashing ("JavaScript heap out of memory") well before using the
+# free-tier instance's real 512MB RAM — V8 was self-limiting its heap to
+# ~256MB (its own conservative default when it can't cleanly read the
+# container's true memory ceiling). Setting the limit explicitly lets it use
+# most of what's actually available, leaving headroom for Node/native
+# overhead outside the JS heap.
+ENV NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=440"
 ENV PORT=8080
 EXPOSE 8080
 
