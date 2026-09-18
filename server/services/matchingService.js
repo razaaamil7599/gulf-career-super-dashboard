@@ -36,19 +36,52 @@ async function fetchRecentCandidates(limit = 300) {
   return Object.entries(val).map(([key, data]) => ({ ...data, id: key }));
 }
 
+// A single shared, periodically-refreshed copy of the full candidate list.
+// The whole dataset is small (~2MB), but this free-tier instance is tight
+// enough on real usable memory that even ONE full JSON parse of it was
+// crashing the process with a heap OOM whenever it happened often — and it
+// was happening far more often than any dashboard polling: every single
+// inbound WhatsApp/Messenger/Instagram message calls findCandidateByPhone(),
+// which used to re-fetch and re-parse the entire node from Firebase on
+// every message. Every caller that needs the full list (candidate counts,
+// filtered dashboard search, and per-message phone lookups) now shares this
+// one cache instead of each doing its own independent full scan — at most
+// one full fetch happens per refresh window, no matter how much traffic
+// (webhook messages or dashboard polling) is hitting the server.
+const CANDIDATES_CACHE_TTL_MS = 3 * 60 * 1000;
+let candidatesCache = null;
+let candidatesCacheAt = 0;
+let candidatesCacheInFlight = null;
+
+async function getCachedCandidates() {
+  const isFresh = candidatesCache && Date.now() - candidatesCacheAt < CANDIDATES_CACHE_TTL_MS;
+  if (isFresh) return candidatesCache;
+  if (candidatesCacheInFlight) return candidatesCacheInFlight;
+
+  candidatesCacheInFlight = (async () => {
+    try {
+      const allCandidates = await rtdbGetAll('candidates');
+      candidatesCache = Array.isArray(allCandidates) ? allCandidates : [];
+      candidatesCacheAt = Date.now();
+      return candidatesCache;
+    } finally {
+      candidatesCacheInFlight = null;
+    }
+  })();
+
+  return candidatesCacheInFlight;
+}
+
 async function matchCandidates({ skill, country, search } = {}) {
   try {
     // A plain, unfiltered poll (the dashboard's default refresh, hit every
-    // few seconds) is by far the most frequent caller here and only ever
-    // needs the most recently active candidates — loading and JSON-parsing
-    // all 4000+ candidate records into memory on every refresh is what was
-    // repeatedly crashing the free-tier instance with a heap OOM (every
-    // crash briefly took the whole dashboard down, which is what made
-    // chats look like they kept "disappearing"). Only fall back to a full
-    // scan when the caller is actually filtering/searching across the
-    // whole pool.
+    // few seconds) is by far the most frequent dashboard-side caller here
+    // and only ever needs the most recently active candidates, so it uses
+    // a cheap indexed query instead of the full cached list. Filtered/
+    // search calls need the whole pool, so they read from the shared cache
+    // above instead of doing their own independent full scan.
     const isFiltered = Boolean(skill || country || search);
-    const allCandidates = isFiltered ? await rtdbGetAll('candidates') : await fetchRecentCandidates();
+    const allCandidates = isFiltered ? await getCachedCandidates() : await fetchRecentCandidates();
     if (!Array.isArray(allCandidates)) return { count: 0, candidates: [] };
 
     const normalizedSkillFilter = normalizeSkill(skill || '', skill || '');
@@ -93,43 +126,12 @@ async function matchCandidates({ skill, country, search } = {}) {
   }
 }
 
-// getSkillCounts/getCountryCounts used to each independently do a full
-// rtdbGetAll('candidates') and were called together via Promise.all from
-// the /counts route — two concurrent full-table JSON parses of the whole
-// candidate pool at once, which was doubling the OOM risk on every counts
-// request. Even a single full scan turned out to be enough to crash the
-// free-tier instance on its own (the candidate dataset is genuinely tiny,
-// ~2MB — the container's real usable memory is just very tight), so the
-// result is now cached in memory for a few minutes instead of recomputed
-// on every poll. Every dashboard tab/device hitting /counts shares the
-// same cached value; only one full scan happens per refresh window no
-// matter how many clients are polling.
-const COUNTS_CACHE_TTL_MS = 5 * 60 * 1000;
-let countsCache = null;
-let countsCacheAt = 0;
-let countsCacheInFlight = null;
-
 async function getCandidateCounts() {
-  const isFresh = countsCache && Date.now() - countsCacheAt < COUNTS_CACHE_TTL_MS;
-  if (isFresh) return countsCache;
-  if (countsCacheInFlight) return countsCacheInFlight;
-
-  countsCacheInFlight = (async () => {
-    try {
-      const allCandidates = await rtdbGetAll('candidates');
-      const candidates = Array.isArray(allCandidates) ? allCandidates : [];
-      countsCache = {
-        skills: buildCategoryCounts(candidates),
-        countries: buildCountryCounts(candidates),
-      };
-      countsCacheAt = Date.now();
-      return countsCache;
-    } finally {
-      countsCacheInFlight = null;
-    }
-  })();
-
-  return countsCacheInFlight;
+  const candidates = await getCachedCandidates();
+  return {
+    skills: buildCategoryCounts(candidates),
+    countries: buildCountryCounts(candidates),
+  };
 }
 
 async function getSkillCounts() {
@@ -144,6 +146,7 @@ async function getCountryCounts() {
 
 module.exports = {
   matchCandidates,
+  getCachedCandidates,
   getCandidateCounts,
   getSkillCounts,
   getCountryCounts,

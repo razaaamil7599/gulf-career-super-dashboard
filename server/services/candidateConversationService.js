@@ -5,10 +5,10 @@ const {
   rtdbSet,
   rtdbUpdate,
   safeFirebaseKey,
-  getDb,
 } = require('./firebaseService');
 const { sendMessage, sendImageMessage, sendDocumentMessage, sendAudioMessage } = require('./whatsappService');
 const { sendMessengerMessage, sendInstagramMessage } = require('./metaChannelService');
+const { getCachedCandidates } = require('./matchingService');
 
 async function sendChannelMessage(channel, to, body, senderContext) {
   if (channel === 'messenger') return sendMessengerMessage(to, body);
@@ -711,21 +711,18 @@ async function findCandidateByPhone(phone) {
   if (!normalized) return null;
 
   // This runs on every single incoming message from every candidate (both
-  // GCG and ARS bots) — doing a full rtdbGetAll('candidates') here on every
-  // message was the primary cause of the server's repeated heap-OOM crash
-  // loop, independent of anything happening on the dashboard side. An
-  // indexed exact-match query covers the overwhelming majority of lookups
-  // (phone numbers are stored consistently); only fall back to the full
-  // scan for the rarer country-code-prefix mismatch case.
-  const db = getDb();
-  const exactSnap = await db.ref('candidates').orderByChild('phone').equalTo(normalized).once('value');
-  const exactVal = exactSnap.val();
-  if (exactVal) {
-    const [id, data] = Object.entries(exactVal)[0];
-    return { id, ...data };
-  }
-
-  const candidates = await rtdbGetAll('candidates');
+  // GCG and ARS bots). It used to re-fetch and JSON-parse the entire
+  // candidates node from Firebase on every message (an indexed exact-match
+  // query alone wasn't enough — most real phone numbers don't match
+  // exactly due to country-code formatting differences, so the suffix-
+  // matching fallback below was actually the common case, not the rare
+  // one). That per-message full scan was the primary cause of the server's
+  // repeated heap-OOM crash loop. getCachedCandidates() shares one
+  // periodically-refreshed in-memory copy across every caller (this
+  // lookup, the dashboard's filtered search, and candidate counts), so a
+  // full Firebase read now happens at most once every few minutes instead
+  // of on every single message.
+  const candidates = await getCachedCandidates();
   return candidates.find(candidate => {
     const candidatePhone = normalizePhone(candidate.phone);
     if (!candidatePhone) return false;
