@@ -63,7 +63,7 @@ const {
   getDb,
 } = require('../services/firebaseService');
 const { getCachedCandidates } = require('../services/matchingService');
-const { getPendingOutbox, ackOutboxItem } = require('../services/mediaOutboxService');
+const { getPendingOutbox, ackOutboxItem, getAndClearOutboxForPhone } = require('../services/mediaOutboxService');
 
 const {
   sendMessage,
@@ -307,7 +307,19 @@ async function fetchHistory(rawPhone) {
       }
     }
   }
-  
+
+  // Same store-and-forward delivery as the dashboard's history route: the
+  // mobile app opening this chat counts as the device "coming online" for
+  // this phone's outbox — hand back anything waiting and clear it.
+  for (const variant of [phone, resolvedPhone]) {
+    const pending = await getAndClearOutboxForPhone(variant);
+    for (const [msgId, item] of Object.entries(pending)) {
+      if (mergedMessages[msgId]) {
+        mergedMessages[msgId] = { ...mergedMessages[msgId], mediaUrl: item.mediaUrl };
+      }
+    }
+  }
+
   return { phone: resolvedPhone, messages: flattenHistory(mergedMessages) };
 }
 
