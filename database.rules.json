@@ -3,7 +3,7 @@
     ".read": true,
     ".write": true,
     "candidates": {
-      ".indexOn": ["lastInboundAt"]
+      ".indexOn": ["lastInboundAt", "phone"]
     }
   }
 }
