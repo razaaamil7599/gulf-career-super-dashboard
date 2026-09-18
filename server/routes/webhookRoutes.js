@@ -22,6 +22,7 @@ const whatsappService = require('../services/whatsappService');
 const { handleCandidateConversation } = require('../services/candidateConversationService');
 const { runWithGate } = require('../services/aiConcurrencyGateService');
 const { archiveMediaAsDataUrl } = require('../services/mediaArchiveService');
+const { queueMediaForDelivery } = require('../services/mediaOutboxService');
 const { matchCandidates } = require('../services/matchingService');
 const { appendChatLog } = require('../services/googleSheetsService');
 const { resolveIdentity } = require('../services/identityService');
@@ -455,18 +456,28 @@ router.post('/', async (req, res) => {
       channel: channel || 'whatsapp',
     });
 
-    // Fire-and-forget: WhatsApp/Meta only keeps a media file retrievable by
-    // mediaId for a limited window after it was sent — after that it 404s
-    // forever with no way to recover it. Archive it into our own database
-    // now, while it's still fetchable, so an admin opening this chat weeks
-    // later doesn't hit "MEDIA_FETCH_FAILED". Not awaited: must not delay
-    // Meta's webhook ack or the candidate's reply on a large download.
+    // Store-and-forward, like WhatsApp itself: media is fetched from Meta
+    // once (its mediaId link expires) and queued in a small, separate
+    // outbox node — NOT embedded on the message record — so every device
+    // (Android app, desktop app) that comes online picks it up, saves its
+    // own local copy, and acks it to clear it from the outbox. Nothing
+    // stays centrally stored in the main database, which is what was
+    // bloating `messages` to ~62MB and crashing the server's heap on every
+    // read. Not awaited: must not delay Meta's webhook ack.
     if (mediaId && (channel || 'whatsapp') === 'whatsapp') {
       archiveMediaAsDataUrl(mediaId, accountInfo.phoneNumberId || recipientPhoneId)
         .then((dataUrl) => {
-          if (dataUrl) return rtdbUpdate(`messages/${from}/${pushedMessageKey}`, { mediaUrl: dataUrl });
+          if (dataUrl) {
+            return queueMediaForDelivery({
+              phone: from,
+              msgId: pushedMessageKey,
+              dataUrl,
+              mimeType,
+              fileName,
+            });
+          }
         })
-        .catch((err) => console.error(`[Webhook] Media archive failed for ${mediaId}:`, err.message));
+        .catch((err) => console.error(`[Webhook] Media outbox queue failed for ${mediaId}:`, err.message));
     }
 
     // Fire-and-forget: gated so a second candidate's AI turn doesn't run

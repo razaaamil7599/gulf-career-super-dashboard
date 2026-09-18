@@ -63,6 +63,7 @@ const {
   getDb,
 } = require('../services/firebaseService');
 const { getCachedCandidates } = require('../services/matchingService');
+const { getPendingOutbox, ackOutboxItem } = require('../services/mediaOutboxService');
 
 const {
   sendMessage,
@@ -1149,6 +1150,33 @@ router.post('/messages/send-media', mediaUpload.single('file'), async (req, res)
     res.json({ ok: Boolean(result.success), phone: to, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Media Outbox — WhatsApp-style store-and-forward. Media a candidate sends
+// is held in a small, separate Firebase node (never the main messages
+// tree) until a connected device downloads it and confirms it saved its
+// own local copy. Nothing accumulates centrally.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/media-outbox', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const items = await getPendingOutbox(limit);
+    res.json({ success: true, count: items.length, items });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/media-outbox/:phone/:msgId/ack', async (req, res) => {
+  try {
+    const { phone, msgId } = req.params;
+    await ackOutboxItem(phone, msgId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
