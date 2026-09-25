@@ -11,7 +11,7 @@ export interface MetaAccountInfo {
   accountName: string;
   shortLabel: string;
   tagColor: string;
-  botType: 'GCG' | 'ARS';
+  botType: 'GCG' | 'ARS' | 'AAMILS';
 }
 
 export const KNOWN_META_ACCOUNTS: Record<string, MetaAccountInfo> = {
@@ -26,16 +26,17 @@ export const KNOWN_META_ACCOUNTS: Record<string, MetaAccountInfo> = {
     tagColor: '#fb923c',
     botType: 'ARS'
   },
-  // 2. Gulf Career Gateway (+91 75995 10170)
+  // 2. Aamils — aamils.com websites/apps (+91 75995 10170). Was Gulf Career
+  // Gateway until 2026-09-25.
   '782096074998071': {
     phoneNumberId: '782096074998071',
     wabaId: '2077696422968224',
     displayPhoneNumber: '+91 75995 10170',
     cleanNumber: '917599510170',
-    accountName: 'Gulf Career Gateway',
-    shortLabel: 'GCG (+91 75995 10170)',
-    tagColor: '#38bdf8',
-    botType: 'GCG'
+    accountName: 'Aamils',
+    shortLabel: 'AAMILS (+91 75995 10170)',
+    tagColor: '#4da3ff',
+    botType: 'AAMILS'
   },
   // 3. GUL CAREER GATEWAY1 (+91 94110 55707)
   '1004575229405481': {
@@ -121,6 +122,6 @@ export function resolveMetaAccountInfo(params?: {
     };
   }
 
-  // Default to main GCG account
-  return KNOWN_META_ACCOUNTS['782096074998071'];
+  // Default to the main Gulf Career number
+  return KNOWN_META_ACCOUNTS['1004575229405481'];
 }

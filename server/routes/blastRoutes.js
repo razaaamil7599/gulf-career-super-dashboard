@@ -87,7 +87,7 @@ router.post('/whatsapp', async (req, res) => {
       targets = candidates;
     }
 
-    // Strictly filter out AR Studios candidates from bulk blast targets
+    // Job blasts never go to AR Studios contacts or to Aamils (782096074998071) customers
     const isArsCandidate = (c) => {
       const pnId = String(c.phone_number_id || c.lastRecipientPhoneId || '');
       const botName = String(c.bot_name || '').toLowerCase();

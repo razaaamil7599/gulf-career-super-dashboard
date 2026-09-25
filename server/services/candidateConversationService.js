@@ -68,6 +68,7 @@ const {
 const { appendChatLog, getChatHistoryByPhone, appendAgentOutputLog } = require('./googleSheetsService');
 const { ingestAgencyVacancy, shouldAutoProcessAgencyLead } = require('./agencyVacancyAutomationService');
 const { publishDashboardMessageEvent } = require('./dashboardRealtimeService');
+const { isAamilsNumber, handleAamilsConversation } = require('./aamilsConversationService');
 const {
   normalizeSkill: normalizeCandidateSkill,
   normalizeCountry: normalizeCandidateCountry,
@@ -768,7 +769,7 @@ async function getRelevantVacancies(candidate = {}, latestMessage = '', messages
   // Strictly prevent AR Studios candidates or conversations on ARS numbers from matching GCG recruitment vacancies
   const pnId = String(candidate.phone_number_id || candidate.lastRecipientPhoneId || '');
   const botName = String(candidate.bot_name || '').toLowerCase();
-  const isArs = pnId === '1231432513384580' || pnId === '782096074998071' || botName.includes('ar studios') || String(recipientPhone).includes('7599510170') || String(recipientPhone).includes('8077345658');
+  const isArs = pnId === '1231432513384580' || botName.includes('ar studios') || String(recipientPhone).includes('8077345658');
   if (isArs) {
     return [];
   }
@@ -2221,6 +2222,15 @@ async function handleCandidateConversation({
       wabaId: wabaId || null,
       receivedOnPhone: recipientPhone || null,
       businessAccountName: businessAccountName || null,
+    });
+  }
+
+  // +91 75995 10170 is the Aamils (aamils.com) sales number — it gets its own
+  // assistant and must never enter the recruitment or casting flows below.
+  if (isAamilsNumber({ recipientPhoneId, recipientPhone })) {
+    return handleAamilsConversation({
+      phone, name, body, type, messageId, recipientPhoneId, recipientPhone, channel,
+      deps: { sendChannelMessage, recordOutboundMessage, markInboundProcessed },
     });
   }
 

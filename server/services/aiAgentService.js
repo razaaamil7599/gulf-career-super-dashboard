@@ -96,6 +96,13 @@ async function callGemini(parts, { temperature = 0.4, responseMimeType = 'applic
         continue;
       }
 
+      // 5xx ("model is experiencing high demand") is per key/project and
+      // passes quickly — try the next pool key instead of failing the reply.
+      if (status >= 500 && currentKeyId) {
+        console.log(`[Gemini] Key returned ${status}, trying next pool key...`);
+        continue;
+      }
+
       throw err;
     }
   }

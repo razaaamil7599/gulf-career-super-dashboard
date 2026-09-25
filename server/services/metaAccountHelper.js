@@ -15,16 +15,17 @@ const KNOWN_META_ACCOUNTS = {
     tagColor: '#f59e0b',
     botType: 'ARS'
   },
-  // 2. Gulf Career Gateway (+91 75995 10170)
+  // 2. Aamils — aamils.com websites/apps (+91 75995 10170). Was Gulf Career
+  // Gateway until 2026-09-25; handled by aamilsConversationService.
   '782096074998071': {
     phoneNumberId: '782096074998071',
     wabaId: '2077696422968224',
     displayPhoneNumber: '+91 75995 10170',
     cleanNumber: '917599510170',
-    accountName: 'Gulf Career Gateway',
-    shortLabel: 'GCG (+91 75995 10170)',
-    tagColor: '#38bdf8',
-    botType: 'GCG'
+    accountName: 'Aamils',
+    shortLabel: 'AAMILS (+91 75995 10170)',
+    tagColor: '#4da3ff',
+    botType: 'AAMILS'
   },
   // 3. GUL CAREER GATEWAY1 (+91 94110 55707)
   '1004575229405481': {
