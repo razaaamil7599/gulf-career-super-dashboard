@@ -99,7 +99,18 @@ async function getMetaConfigForSender(senderPhoneIdOrPhone) {
       String(c.phone || '').replace(/\D/g, '') === normalized
     );
 
-    if (!config) return defaults;
+    if (!config) {
+      // A number that isn't registered in Bot Portal Settings must still reply
+      // from itself. Falling back to the default phone ID made customers who
+      // wrote to one number get the answer from a different one. A Phone
+      // Number ID is 13+ digits; a display phone number is shorter.
+      const raw = String(senderPhoneIdOrPhone || '').trim();
+      if (/^\d{13,}$/.test(raw) && raw !== defaults.phoneId) {
+        console.warn(`[WhatsApp Service] ${raw} not in settings/whatsapp_numbers — replying from it with the default token.`);
+        return { ...defaults, phoneId: raw };
+      }
+      return defaults;
+    }
 
     return {
       accessToken: (config.token || defaults.accessToken).trim(),
